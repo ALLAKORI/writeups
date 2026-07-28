@@ -4,7 +4,7 @@ title: "Hack The Box Season 11 private writeups"
 date: 2026-07-02 00:30:00 +0100
 categories: [HackTheBox, Labs]
 tags: [hackthebox, season-11, linux, windows, active-directory, writeups]
-description: "Non-spoiler tracker for my private Hack The Box Season 11 writeup repository covering Reactor, DevHub, Connected, Checkpoint and Enigma."
+description: "Non-spoiler tracker for my private Hack The Box Season 11 writeup repository covering Reactor, DevHub, Connected, Checkpoint, Enigma, Paperwork, MakeSense, Bedside and DarkZeroReturns."
 ---
 
 ## Overview
@@ -28,6 +28,10 @@ This public post is only a safe tracker. It does not publish active-machine solu
 | Connected | Linux | Easy | Private writeup completed |
 | Checkpoint | Windows | Medium | Private writeup completed |
 | Enigma | Linux | Easy | Private writeup completed |
+| Paperwork | Linux | Easy | Private writeup completed |
+| MakeSense | Linux | Medium | Private writeup completed |
+| Bedside | Linux | Medium | Private writeup completed |
+| DarkZeroReturns | Windows / Active Directory | Hard | Private writeup completed |
 
 ## Public vulnerability coverage
 
@@ -41,7 +45,11 @@ This table is intentionally non-spoiler: it lists the vulnerability names and th
 | DevHub | CVE-2026-23744 MCPJam Inspector Remote Code Execution; exposed Jupyter token; hardcoded OPSMCP API key and hidden admin tool | Initial access; lateral movement; privilege escalation |
 | Connected | CVE-2025-57819 FreePBX Endpoint Manager SQL injection to RCE; Incron / DAHDI local misconfiguration | Initial access; privilege escalation |
 | Checkpoint | Active Directory object recovery, ACL abuse, dMSA / BadSuccessor abuse, memory forensics, Pass-the-Hash | Active Directory chain |
-| Enigma | CVE-2025-69212 OpenSTAManager command injection; CVE-2026-27626 OliveTin password argument command injection; related CVE-2026-38751 OpenSTAManager upload issue | Foothold; privilege escalation |
+| Enigma | CVE-2026-38751 OpenSTAManager module-upload RCE PoC; related CVE-2025-69212 OpenSTAManager command-injection context; CVE-2026-27626 OliveTin password argument command injection | Foothold; privilege escalation |
+| Paperwork | LPD command injection; PJL path traversal and arbitrary file write; `SCM_RIGHTS` file descriptor leak; password reuse | Initial access; user escalation; privilege escalation |
+| MakeSense | Hardcoded client-side encryption key; stored XSS; WordPress administrator account creation; PHP reverse shell; credential reuse; internal OCR-to-PHP root RCE | Initial access; lateral movement; privilege escalation |
+| Bedside | CVE-2025-64512 pdfminer.six pickle deserialization RCE; internal development-server path traversal; PyTorch checkpoint deserialization through `torch.load()`; shared datastore permission boundary failure | Initial access; container-to-host pivot; privilege escalation |
+| DarkZeroReturns | CVE-2026-33937 Handlebars AST injection RCE; related CVE-2021-23369 Handlebars RCE context; Gitea Actions workflow trust abuse; Kerberos/AD ACL abuse; forest-trust ExtraSID and DCSync chain | Initial access; lateral movement; Linux root; domain and cross-forest compromise |
 
 ## Documentation standard
 

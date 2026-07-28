@@ -16,7 +16,7 @@ Current posts:
 
 | Date | Post |
 | --- | --- |
-| 2026-07-02 | Hack The Box Season 11 private writeups |
+| 2026-07-02 | Hack The Box Season 11 private writeups tracker, updated through DarkZeroReturns |
 | 2026-05-14 | Volt Typhoon intrusion investigation |
 | 2026-04-29 | CSIA CTF 2026 first-place writeups |
 | 2026-04-20 | Browzi MiniBrowser heap exploitation |
