@@ -4,7 +4,7 @@ title: "Hack The Box Season 11 private writeups"
 date: 2026-07-02 00:30:00 +0100
 categories: [HackTheBox, Labs]
 tags: [hackthebox, season-11, linux, windows, active-directory, writeups]
-description: "Non-spoiler tracker for my private Hack The Box Season 11 writeup repository covering Reactor, DevHub, Connected, Checkpoint, Enigma, Paperwork, MakeSense, Bedside and DarkZeroReturns."
+description: "Non-spoiler tracker for my private Hack The Box Season 11 writeup repository covering Reactor, DevHub, Connected, Checkpoint, Enigma, Paperwork, MakeSense, Bedside, DarkZeroReturns and Cohort."
 ---
 
 ## Overview
@@ -32,6 +32,7 @@ This public post is only a safe tracker. It does not publish active-machine solu
 | MakeSense | Linux | Medium | Private writeup completed |
 | Bedside | Linux | Medium | Private writeup completed |
 | DarkZeroReturns | Windows / Active Directory | Hard | Private writeup completed |
+| Cohort | Linux | Easy | Private writeup completed |
 
 ## Public vulnerability coverage
 
@@ -50,6 +51,7 @@ This table is intentionally non-spoiler: it lists the vulnerability names and th
 | MakeSense | Hardcoded client-side encryption key; stored XSS; WordPress administrator account creation; PHP reverse shell; credential reuse; internal OCR-to-PHP root RCE | Initial access; lateral movement; privilege escalation |
 | Bedside | CVE-2025-64512 pdfminer.six pickle deserialization RCE; internal development-server path traversal; PyTorch checkpoint deserialization through `torch.load()`; shared datastore permission boundary failure | Initial access; container-to-host pivot; privilege escalation |
 | DarkZeroReturns | CVE-2026-33937 Handlebars AST injection RCE; related CVE-2021-23369 Handlebars RCE context; Gitea Actions workflow trust abuse; Kerberos/AD ACL abuse; forest-trust ExtraSID and DCSync chain | Initial access; lateral movement; Linux root; domain and cross-forest compromise |
+| Cohort | CVE-2026-39987 Marimo pre-auth Terminal WebSocket RCE; SSRF loopback bypass through `127.1`; nginx/vhost pivot to Marimo; CVE-2026-41651 PackageKit TOCTOU / Pack2TheRoot | Initial access; privilege escalation |
 
 ## Documentation standard
 
