@@ -1,45 +1,43 @@
 ---
 layout: post
-title: "Hack The Box Season 11 private writeups"
+title: "Hack The Box Season 11 writeups"
 date: 2026-07-02 00:30:00 +0100
 categories: [HackTheBox, Labs]
 tags: [hackthebox, season-11, linux, windows, active-directory, writeups]
-description: "Non-spoiler tracker for my private Hack The Box Season 11 writeup repository covering Reactor, DevHub, Connected, Checkpoint, Enigma, Paperwork, MakeSense, Bedside, DarkZeroReturns, Cohort and DanglingTree."
+description: "Tracker for my Hack The Box Season 11 writeup repository covering Reactor, DevHub, Connected, Checkpoint, Enigma, Paperwork, MakeSense, Bedside, DarkZeroReturns, Cohort and DanglingTree."
 ---
 
 ## Overview
 
-I maintain a private repository for my Hack The Box Season 11 writeups:
+My Hack The Box Season 11 writeups live in a public repository:
 
 ```text
 https://github.com/ALLAKORI/htb-season-11-writeups
 ```
 
-The repository is intentionally private while the machines are active. It contains full exploitation notes, CVE and vulnerability mapping, commands, evidence, attack-chain summaries, remediation guidance and redacted flags.
-
-This public post is only a safe tracker. It does not publish active-machine solutions.
+The season is over and the machines have retired, so the full notes are now public. The repository contains exploitation notes, CVE and vulnerability mapping, commands, evidence, attack-chain summaries, remediation guidance and redacted flags.
 
 ## Current Season 11 coverage
 
 | Machine | OS | Difficulty | Status |
 | --- | --- | --- | --- |
-| Reactor | Linux | Easy | Private writeup completed |
-| DevHub | Linux | Medium | Private writeup completed |
-| Connected | Linux | Easy | Private writeup completed |
-| Checkpoint | Windows | Medium | Private writeup completed |
-| Enigma | Linux | Easy | Private writeup completed |
-| Paperwork | Linux | Easy | Private writeup completed |
-| MakeSense | Linux | Medium | Private writeup completed |
-| Bedside | Linux | Medium | Private writeup completed |
-| DarkZeroReturns | Windows / Active Directory | Hard | Private writeup completed |
-| Cohort | Linux | Easy | Private writeup completed |
-| DanglingTree | Windows / Active Directory | Medium | Private writeup completed |
+| Reactor | Linux | Easy | Writeup completed |
+| DevHub | Linux | Medium | Writeup completed |
+| Connected | Linux | Easy | Writeup completed |
+| Checkpoint | Windows | Medium | Writeup completed |
+| Enigma | Linux | Easy | Writeup completed |
+| Paperwork | Linux | Easy | Writeup completed |
+| MakeSense | Linux | Medium | Writeup completed |
+| Bedside | Linux | Medium | Writeup completed |
+| DarkZeroReturns | Windows / Active Directory | Hard | Writeup completed |
+| Cohort | Linux | Easy | Writeup completed |
+| DanglingTree | Windows / Active Directory | Medium | Writeup completed |
 
-## Public vulnerability coverage
+## Vulnerability coverage
 
-The private writeups now include a dedicated CVE/vulnerability section when a named vulnerability was part of the chain.
+Each writeup includes a dedicated CVE/vulnerability section when a named vulnerability was part of the chain.
 
-This table is intentionally non-spoiler: it lists the vulnerability names and the broad stage only, not the exploit payloads or target-specific steps.
+This overview lists the vulnerability names and the broad stage only, not the exploit payloads or target-specific steps.
 
 | Machine | CVEs / vulnerability names covered | Broad stage |
 | --- | --- | --- |
@@ -57,7 +55,7 @@ This table is intentionally non-spoiler: it lists the vulnerability names and th
 
 ## Documentation standard
 
-Each private writeup follows the same structure:
+Each writeup follows the same structure:
 
 | Section | Purpose |
 | --- | --- |
@@ -70,13 +68,13 @@ Each private writeup follows the same structure:
 | Remediation | Defensive guidance mapped to the weaknesses found |
 | Flags | Redacted user/root flag status |
 
-## Why the details stay private
+## Season ended, repository now public
 
-Hack The Box active-machine material can include live exploitation chains, credentials, target-specific paths and flags. Publishing that publicly before retirement would spoil the lab for other players.
+Hack The Box active-machine material includes live exploitation chains, credentials, target-specific paths and flags. Full notes were kept private while the machines were active to avoid spoiling the lab for other players.
 
-For that reason, the full notes stay in the private repository until the machines retire and the material can be reviewed for safe publication.
+Season 11 has now ended, the machines have retired, and the material has been reviewed for safe publication. The repository is public.
 
-## Safe public takeaway
+## Takeaway
 
 Season 11 is useful practice for chaining realistic issues across Linux services, web applications and Windows Active Directory environments. The main value of the writeups is not just the final flag, but the discipline of documenting:
 
@@ -84,4 +82,3 @@ Season 11 is useful practice for chaining realistic issues across Linux services
 - why a pivot made sense,
 - which evidence confirmed the path,
 - and how the same weakness could be remediated defensively.
-
