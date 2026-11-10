@@ -16,12 +16,12 @@ Current posts:
 
 | Date | Post |
 | --- | --- |
+| 2026-11-10 | TryHackMe — VulnNet-RST: Active Directory attack-chain assessment |
 | 2026-11-10 | Hack The Box — DanglingTree: Windows & Active Directory pentest case study |
 | 2026-05-14 | Volt Typhoon intrusion investigation |
 | 2026-04-29 | CSIA CTF 2026 first-place writeups |
 | 2026-04-20 | Browzi MiniBrowser heap exploitation |
 | 2026-03-15 | deepwash PHP DateTimeImmutable parser logic |
-| 2026-02-01 | SOKOLO AD lab Active Directory attack chain |
 
 ## Configuration
 
