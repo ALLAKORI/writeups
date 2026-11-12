@@ -99,17 +99,36 @@ A readable onboarding document is not automatically a critical vulnerability. Th
 
 ### 2.2 Download and inspect the onboarding PDF
 
-The PDF was downloaded during the lab; the exact SMB `get` command has not been preserved in the recovered transcript. However, I **did retain the subsequent PDF-to-text command**:
+This part is now grounded in my **30 October 2026 SMB session**, not just a generic illustration. I kept the exact commands and redacted the one sensitive value in the extracted document.
 
-**Recorded command:**
+**Recorded SMB commands — from the anonymous connection:**
 
-```bash
-pdftotext x5oa55w5.0vj.pdf -
+```console
+$ smbclient //10.128.171.57/data -N
+smb: \\> cd onboarding
+smb: \\onboarding\\> prompt off
+smb: \\onboarding\\> mget *
 ```
 
-The trailing `-` sends the extracted text to standard output instead of writing a separate `.txt` file. This is convenient when looking for relevant sections of a document.
+`cd onboarding` enters the directory discovered in the share. `prompt off` disables confirmation for each file and `mget *` downloads the files in that directory. The precise full download progress lines were not retained; the commands and the PDF filename were.
 
-**Recorded output excerpt — line breaks normalized and the password redacted:**
+**Relevant directory entry from the original listing (other entries omitted):**
+
+```text
+x5oa55w5.0vj.pdf    3032659 bytes
+```
+
+After downloading the PDF, I extracted its text:
+
+**Recorded terminal command:**
+
+```console
+$ pdftotext x5oa55w5.0vj.pdf -
+```
+
+The trailing `-` sends extracted text to standard output. That makes it possible to inspect the document without modifying its contents or creating a new text file.
+
+**Extracted PDF text — selected excerpt, original spelling retained, password redacted:**
 
 ```text
 The Art of Effective User Onboarding
@@ -126,7 +145,14 @@ The Reset Team
 ...
 ```
 
-**Note:** The spelling `passowrd` is preserved from the document; it is not a typo introduced in this write-up. The PDF contained an actual initial password in that position, but neither its value nor any associated cracked secret is published.
+**Why these specific lines matter:**
+
+- `Subject: Welcome to Reset` identifies the document as an onboarding example/message rather than a system banner.
+- `Dear LILY ONEILL` associates the credential-like instruction with an identifiable account.
+- `The initial passowrd is: [REDACTED]` is the sensitive evidence. The typo **passowrd** is present in the original PDF; I have not corrected it to avoid changing the evidence.
+- The rest of the PDF is omitted because it does not add to the finding. **No password, cracked hash or flag appears in this article.**
+
+Crucially, **recovering a password-like string from a document is not the same as validating an account**. My later authentication checks and the separate AS-REP Roasting result must be evaluated on their own merits; I do not claim that the PDF password provided the eventual privileged access.
 
 ### 2.3 Why this output matters
 
