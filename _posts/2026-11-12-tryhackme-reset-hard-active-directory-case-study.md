@@ -77,36 +77,77 @@ nmap -Pn -sV -p 53,88,135,139,389,445,464,593,636,3268,3269,3389,5985 \
 
 ## 2. SMB: anonymous access and onboarding material
 
-My recorded command to interact with the **Data** share did **not** require a domain password:
+The first useful finding was that **the `data` share was accessible without valid domain credentials**. That made its contents worth reviewing before trying more aggressive tests.
+
+### 2.1 Connect to the share
+
+**Recorded command — 30 October 2026:**
 
 ```bash
-# Recorded in the October 30 session:
 smbclient //10.128.171.57/data -N
 ```
 
-The accessible content included an `onboarding` directory. My session recorded a PDF with a randomized-looking filename:
+Here, `-N` tells `smbclient` not to prompt for a password. I then explored the available files and found an `onboarding` directory containing a PDF with a randomized filename.
+
+**Recorded file-listing detail (other entries omitted):**
 
 ```text
 x5oa55w5.0vj.pdf    3032659 bytes
 ```
 
-The file was an onboarding message associated with the user **LILY_ONEILL**. Its text contained a reset/initial-password instruction.
+A readable onboarding document is not automatically a critical vulnerability. The decisive question is **what information it contains and who can read it**.
 
-I intentionally do **not** reproduce that password. The important weakness was not the exact string: an onboarding document accessible to the wrong security context exposed authentication material.
+### 2.2 Download and inspect the onboarding PDF
 
-### Extract text locally
+The PDF was downloaded during the lab; the exact SMB `get` command has not been preserved in the recovered transcript. However, I **did retain the subsequent PDF-to-text command**:
 
-I used SMB file retrieval and text extraction. The *exact original download sequence* was not retained; the following is equivalent syntax for **reading a downloaded PDF**, not an invented screenshot of my terminal:
+**Recorded command:**
 
 ```bash
-# After downloading an authorized test document:
-pdftotext -layout x5oa55w5.0vj.pdf -
+pdftotext x5oa55w5.0vj.pdf -
 ```
 
-**Observed:** SMB share access and the onboarding PDF.  
-**Not independently preserved:** The exact contents of my initial SMB `get` command and a complete transcript linking that document to all later credentials.
+The trailing `-` sends the extracted text to standard output instead of writing a separate `.txt` file. This is convenient when looking for relevant sections of a document.
 
-**Why it matters:** Anonymous or overly broad share permissions are especially dangerous when scripts, onboarding templates and operational documents contain authentication details. A professional audit needs to record *who could read what*, not simply list share names.
+**Recorded output excerpt — line breaks normalized and the password redacted:**
+
+```text
+The Art of Effective User Onboarding
+...
+Example Email
+
+Subject: Welcome to Reset
+Dear LILY ONEILL,
+
+The initial passowrd is: [REDACTED]
+
+Best regards,
+The Reset Team
+...
+```
+
+**Note:** The spelling `passowrd` is preserved from the document; it is not a typo introduced in this write-up. The PDF contained an actual initial password in that position, but neither its value nor any associated cracked secret is published.
+
+### 2.3 Why this output matters
+
+The interesting part is not the PDF filename or the `pdftotext` command alone. The output answers a concrete security question:
+
+1. **Exposure:** an onboarding document was readable from a share accessible without a domain password.
+2. **Sensitive content:** the extracted text associated an identifiable domain user, `LILY_ONEILL`, with an initial-password instruction.
+3. **Risk:** if a real, valid credential is placed in such a document, an unauthorized reader could attempt to use it. This is an **information-exposure finding**, not automatically proof of administrative access.
+
+**Important validation limit:** My historical testing of `LILY_ONEILL` over SMB was mapped to a **Guest** context, and a separate LDAP attempt did not establish an authenticated session. Therefore, I cannot honestly claim that the PDF alone immediately provided a working privileged domain account. I continued investigating the directory and authentication configuration instead.
+
+In a professional report, this distinction would be explicit:
+
+| Evidence | Conclusion |
+| --- | --- |
+| Anonymous/no-password SMB connection succeeds | The share can be reached without supplying a domain password |
+| PDF contains `The initial passowrd is: [REDACTED]` | Credential-like material is exposed in the document |
+| SMB attempt as the named user is mapped to Guest | A valid, authorized domain session was **not** demonstrated by that test |
+| Subsequent AD investigations produce a separate confirmed account | That later result must be documented as a distinct step, not automatically attributed to the PDF |
+
+**Remediation:** Remove plaintext credentials from onboarding templates; prevent unauthenticated reading of sensitive shares; provide initial secrets via an appropriate secure enrollment channel; rotate exposed passwords; and verify file-level permissions, not just share-level access.
 
 ## 3. Kerberos: AS-REP Roasting
 
