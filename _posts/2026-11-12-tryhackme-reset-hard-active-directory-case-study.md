@@ -162,7 +162,7 @@ The interesting part is not the PDF filename or the `pdftotext` command alone. T
 2. **Sensitive content:** the extracted text associated an identifiable domain user, `LILY_ONEILL`, with an initial-password instruction.
 3. **Risk:** if a real, valid credential is placed in such a document, an unauthorized reader could attempt to use it. This is an **information-exposure finding**, not automatically proof of administrative access.
 
-**Important validation limit:** My historical testing of `LILY_ONEILL` over SMB was mapped to a **Guest** context, and a separate LDAP attempt did not establish an authenticated session. Therefore, I cannot honestly claim that the PDF alone immediately provided a working privileged domain account. I continued investigating the directory and authentication configuration instead.
+**Important validation limit:** Finding a password in an onboarding PDF did not mean that it worked as a domain-user credential. I tested the account and documented the result below, then moved to Kerberos account enumeration.
 
 In a professional report, this distinction would be explicit:
 
@@ -170,14 +170,58 @@ In a professional report, this distinction would be explicit:
 | --- | --- |
 | Anonymous/no-password SMB connection succeeds | The share can be reached without supplying a domain password |
 | PDF contains `The initial passowrd is: [REDACTED]` | Credential-like material is exposed in the document |
-| SMB attempt as the named user is mapped to Guest | A valid, authorized domain session was **not** demonstrated by that test |
-| Subsequent AD investigations produce a separate confirmed account | That later result must be documented as a distinct step, not automatically attributed to the PDF |
+| SMB test as `LILY_ONEILL` returns `(Guest)` | Guest-mapped SMB access is **not** proof of a valid domain-user session |
+| LDAP attempt returns `Connection reset by peer` | LDAP authentication was not established; the error does not definitively indicate a wrong password |
+| AS-REP Roasting reveals `TABATHA_BRITT` and subsequent SMB authentication succeeds | A **separately recovered, validated** domain account enabled the later AD enumeration and ACL assessment |
 
 **Remediation:** Remove plaintext credentials from onboarding templates; prevent unauthenticated reading of sensitive shares; provide initial secrets via an appropriate secure enrollment channel; rotate exposed passwords; and verify file-level permissions, not just share-level access.
 
+### 2.4 Testing the onboarding account: why I did not continue with LILY_ONEILL
+
+The PDF was a useful **information-disclosure finding**, but I still needed to check whether the credentials provided genuine access. I tested the named account with NetExec against SMB and LDAP. The historical results below come from my **30 October 2026** session; the password is replaced with `[REDACTED]`.
+
+**SMB credential test — command reconstructed from the retained test context:**
+
+```bash
+# The password supplied to NetExec was the value found in the onboarding PDF.
+# Its literal value has been removed from this write-up.
+nxc smb 10.128.171.57 -u 'LILY_ONEILL' -p '[REDACTED]' -d thm.corp
+```
+
+**SMB result — original relevant line with only the password redacted:**
+
+```text
+SMB  10.128.171.57  445  HAYSTACK  [+] thm.corp\LILY_ONEILL:[REDACTED] (Guest)
+```
+
+The crucial detail is **`(Guest)`**. NetExec reported a guest-mapped SMB context, **not a confirmed authenticated session as `THM.CORP\LILY_ONEILL`**. In other words, I could not use this output to claim that the password from the PDF was a valid domain credential. The plus sign by itself was not enough: the **security context** mattered.
+
+I also tried LDAP with the same account.
+
+**LDAP credential test — equivalent sanitized syntax; the precise historical invocation was not retained:**
+
+```bash
+nxc ldap 10.128.171.57 -u 'LILY_ONEILL' -p '[REDACTED]' -d thm.corp
+```
+
+**LDAP result — relevant error from my recorded output:**
+
+```text
+LDAP  10.128.171.57  389  HAYSTACK  [-] Error connecting to the domain
+                                      Error: [Errno 104] Connection reset by peer
+```
+
+**Interpretation:** The LDAP connection was reset by the peer. This did **not** demonstrate successful LDAP authentication, but neither did it prove conclusively that the password was incorrect. A transport-level reset can have several explanations, so it would be wrong to label this simply as `invalid credentials`.
+
+**Decision point — why I pivoted:** I had extracted a potentially sensitive password from a publicly readable document, but I did **not** have reliable authenticated domain access through `LILY_ONEILL`. Rather than building the rest of the attack on an unverified credential, I continued identity enumeration and investigated Kerberos pre-authentication weaknesses. That led to the AS-REP Roasting of **`TABATHA_BRITT`**. Its recovered password was subsequently **validated against SMB**, giving me a reliable account for further Active Directory enumeration and ACL analysis.
+
+> **Key lesson:** A disclosed password is a lead, not a foothold. Always distinguish a guest-mapped SMB connection, a transport error, and a successfully authenticated domain identity.
+
+---
+
 ## 3. Kerberos: AS-REP Roasting
 
-I subsequently identified a domain account vulnerable to **AS-REP Roasting**: **TABATHA_BRITT**.
+Because the onboarding credential did not give me a confirmed authenticated domain context, I pursued a different route: Kerberos account enumeration. I subsequently identified a domain account vulnerable to **AS-REP Roasting**: **TABATHA_BRITT**.
 
 Normally, Kerberos pre-authentication helps prevent obtaining an AS-REP response for arbitrary accounts without first demonstrating knowledge of the account's secret. When a user is configured without this requirement, an attacker may request encrypted AS-REP material and test password guesses **offline**.
 
@@ -508,6 +552,7 @@ In a client-facing report, I would separate **the evidence, the root cause and t
 | Host/domain/port observations | **Recorded** |
 | Anonymous SMB and onboarding PDF | **Recorded** |
 | Full original SMB download command | **Not preserved; equivalent shown** |
+| `LILY_ONEILL` SMB `(Guest)` and LDAP connection reset | **Recorded; credential redacted, exact command syntax reconstructed** |
 | Original AS-REP request command | **Not preserved; equivalent shown** |
 | John crack of `TABATHA_BRITT` | **Recorded** |
 | NetExec authentication; WinRM failure | **Recorded** |
@@ -532,4 +577,3 @@ I completed both objectives in this authorized TryHackMe environment. **No plain
 
 **Room:** [TryHackMe Reset](https://tryhackme.com/room/resetui) · **Portfolio:** [ALLAKORI](https://allakori.github.io/) · **TryHackMe profile:** [allakori](https://tryhackme.com/p/allakori)
 
-*For a second perspective on the same room, see [jaxafed's earlier write-up](https://jaxafed.github.io/posts/tryhackme-reset/). The commands and outcomes labeled “recorded” in this article refer to my own October 30 session; the external article is not treated as evidence of what I personally ran.*
