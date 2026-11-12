@@ -16,7 +16,7 @@ Current posts:
 
 | Date | Post |
 | --- | --- |
-| 2026-11-12 | TryHackMe — Reset (Hard): spoiler-free Active Directory security case study |
+| 2026-11-12 | [TryHackMe — Reset (Hard): spoiler-free Active Directory security case study](https://allakori.github.io/writeups/posts/tryhackme-reset-hard-active-directory-case-study/) |
 | 2026-11-10 | TryHackMe — VulnNet-RST: Active Directory attack-chain assessment |
 | 2026-11-10 | Hack The Box — DanglingTree: Windows & Active Directory pentest case study |
 | 2026-05-14 | Volt Typhoon intrusion investigation |
