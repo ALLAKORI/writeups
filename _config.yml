@@ -149,6 +149,8 @@ pwa:
     # Usually its value is the `baseurl` of another website that
     # shares the same domain name as the current website.
     deny_paths:
+      - "/writeups/posts/tryhackme-reset-hard-active-directory-case-study/"
+      # Prevent a stale service-worker copy from masking the corrected fenced-code HTML.
       # - "/example"  # URLs match `<SITE_URL>/example/*` will not be cached by the PWA
 
 paginate: 10
