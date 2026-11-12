@@ -223,36 +223,36 @@ LDAP  10.128.171.57  389  HAYSTACK  [-] Error connecting to the domain
 
 The onboarding PDF exposed an initial-password instruction, but my SMB test of **LILY_ONEILL** was mapped to **Guest**, and the LDAP connection was reset. I could not honestly treat that credential as a confirmed foothold. The next productive stage was to identify domain users and test whether any account could be AS-REP Roasted.
 
-### 3.1 Where does \`users.txt\` come from?
+### 3.1 Where does `users.txt` come from?
 
-**Important distinction:** My retained 30 October terminal excerpt proves the later John the Ripper result for **TABATHA_BRITT**, but it does **not** preserve the command I originally used to enumerate usernames or create a file named \`users.txt\`. I cannot label an invented RID enumeration transcript as my own.
+**Important distinction:** My retained 30 October terminal excerpt proves the later John the Ripper result for **TABATHA_BRITT**, but it does **not** preserve the command I originally used to enumerate usernames or create a file named `users.txt`. I cannot label an invented RID enumeration transcript as my own.
 
 For a reader reproducing this authorized lab, **RID brute-force over SMB is a workable way to build that list**. Independent walkthroughs of the same room demonstrate this route. The following is a **reproducible alternative**, not a recovered command from my terminal.
 
 **Step A — Enumerate domain identities:**
 
-~~~bash
+```bash
 TARGET=10.128.171.57
 nxc smb "$TARGET" -u 'Guest' -p '' --rid-brute 2000 | tee rid_enum.txt
-~~~
+```
 
-- \`-u 'Guest' -p ''\` requests a guest-style SMB connection, rather than pretending that the password exposed in the onboarding PDF was accepted for domain access.
-- \`--rid-brute 2000\` asks NetExec to test domain RIDs in that range to discover names. A \`SidTypeUser\` entry represents a user; \`SidTypeGroup\` is **not** a user for the next step.
-- \`tee rid_enum.txt\` keeps the complete output for review. The filename is arbitrary; the important part is retaining the output before parsing it.
+- `-u 'Guest' -p ''` requests a guest-style SMB connection, rather than pretending that the password exposed in the onboarding PDF was accepted for domain access.
+- `--rid-brute 2000` asks NetExec to test domain RIDs in that range to discover names. A `SidTypeUser` entry represents a user; `SidTypeGroup` is **not** a user for the next step.
+- `tee rid_enum.txt` keeps the complete output for review. The filename is arbitrary; the important part is retaining the output before parsing it.
 
 **Illustrative output structure — NOT a verbatim snapshot from my 30 October session:**
 
-~~~text
-SMB  10.128.171.57  445  HAYSTACK  1150: THM\RAQUEL_BENSON (SidTypeUser)
-SMB  10.128.171.57  445  HAYSTACK  1137: THM\TABATHA_BRITT (SidTypeUser)
-SMB  10.128.171.57  445  HAYSTACK  513: THM\Domain Users (SidTypeGroup)
-~~~
+```text
+SMB  10.128.171.57  445  HAYSTACK  <RID>: THM\EXAMPLE_USER (SidTypeUser)
+SMB  10.128.171.57  445  HAYSTACK  <RID>: THM\TABATHA_BRITT (SidTypeUser)
+SMB  10.128.171.57  445  HAYSTACK  <RID>: THM\Domain Users (SidTypeGroup)
+```
 
-The RIDs above are **illustrative**, not historical values. The useful parts are the \`DOMAIN\username\` format and the \`(SidTypeUser)\` suffix; these let us extract only user identities.
+The `<RID>` placeholders are **illustrative**, not historical values. The useful parts are the `DOMAIN\username` format and the `(SidTypeUser)` suffix; these let us extract only user identities.
 
-**Step B — Extract actual usernames into \`users.txt\`:**
+**Step B — Extract actual usernames into `users.txt`:**
 
-~~~bash
+```bash
 grep 'SidTypeUser' rid_enum.txt \
   | sed -nE 's/.*\\([^\\[:space:]]+)[[:space:]]+\(SidTypeUser\).*/\1/p' \
   | sort -u > users.txt
@@ -260,24 +260,24 @@ grep 'SidTypeUser' rid_enum.txt \
 wc -l users.txt
 head users.txt
 grep -x 'TABATHA_BRITT' users.txt
-~~~
+```
 
-- \`grep\` keeps user objects and excludes group/computer objects.
-- \`sed\` removes the RID, domain prefix and NetExec annotations, leaving a **username on each line**.
-- \`sort -u\` removes duplicates.
-- \`wc\`, \`head\` and \`grep -x\` verify the resulting file rather than assuming it is correctly formatted.
+- `grep` keeps user objects and excludes group/computer objects.
+- `sed` removes the RID, domain prefix and NetExec annotations, leaving a **username on each line**.
+- `sort -u` removes duplicates.
+- `wc`, `head` and `grep -x` verify the resulting file rather than assuming it is correctly formatted.
 
 **Expected file format (example, not claimed as a complete historical list):**
 
-~~~text
+```text
 ERNESTO_SILVA
 LEANN_LONG
 TABATHA_BRITT
-~~~
+```
 
-**Why this matters:** \`users.txt\` is **not** TryHackMe's \`user.txt\` flag. The former is a locally created **input list of account names** for GetNPUsers; the latter is an objective file found later in the challenge.
+**Why this matters:** `users.txt` is **not** TryHackMe's `user.txt` flag. The former is a locally created **input list of account names** for GetNPUsers; the latter is an objective file found later in the challenge.
 
-**If the enumeration returns \`STATUS_ACCESS_DENIED\` or no user lines:** first confirm the identity and the target with \`nxc smb "$TARGET" -u 'Guest' -p '' --shares\`. Do not fabricate a list or assume guest access worked. Review the actual SMB context and any permitted user-discovery techniques available in your lab. If you have legitimately discovered one specific username, GetNPUsers also supports querying that identity directly (see below).
+**If the enumeration returns `STATUS_ACCESS_DENIED` or no user lines:** first confirm the identity and the target with `nxc smb "$TARGET" -u 'Guest' -p '' --shares`. Do not fabricate a list or assume guest access worked. Review the actual SMB context and any permitted user-discovery techniques available in your lab. If you have legitimately discovered one specific username, GetNPUsers also supports querying that identity directly (see below).
 
 ### 3.2 Request AS-REP responses with Impacket
 
@@ -285,37 +285,37 @@ Kerberos **pre-authentication** normally prevents arbitrary account requests fro
 
 **Reconstructed, reproducible command using the list produced above:**
 
-~~~bash
+```bash
 impacket-GetNPUsers 'thm.corp/' \
   -dc-ip "$TARGET" -no-pass -request \
   -usersfile users.txt -format john \
   -outputfile asrep.hashes
 
 test -s asrep.hashes && echo "[+] AS-REP output saved" || echo "[-] No AS-REP hashes saved"
-~~~
+```
 
-- \`-usersfile users.txt\` supplies the accounts **we enumerated and extracted**; it does not discover them by itself.
-- \`-no-pass\` makes the request without a previously authenticated password.
-- \`-request\` requests roastable material from the KDC.
-- \`-format john\` generates a format usable by John the Ripper.
-- \`-outputfile asrep.hashes\` creates the input for the cracking step; \`test -s\` checks that it actually contains data.
+- `-usersfile users.txt` supplies the accounts **we enumerated and extracted**; it does not discover them by itself.
+- `-no-pass` makes the request without a previously authenticated password.
+- `-request` requests roastable material from the KDC.
+- `-format john` generates a format usable by John the Ripper.
+- `-outputfile asrep.hashes` creates the input for the cracking step; `test -s` checks that it actually contains data.
 
 **Representative result types (not my exact original GetNPUsers output):**
 
-~~~text
+```text
 [-] User <NON_ROASTABLE_ACCOUNT> doesn't have UF_DONT_REQUIRE_PREAUTH set
 $krb5asrep$...TABATHA_BRITT@THM.CORP: [AS_REP_MATERIAL_REDACTED]
-~~~
+```
 
 The first line is not a failure of the entire assessment: it means that account does not allow this technique. The second type of result is what makes offline analysis possible. **The original hash bytes must not be published.**
 
 If you only have **one username** and no valid list, the tool can instead check that particular account:
 
-~~~bash
+```bash
 # Alternative only, once the target username is legitimately known.
 impacket-GetNPUsers 'thm.corp/TABATHA_BRITT' \
   -dc-ip "$TARGET" -no-pass -request -format john
-~~~
+```
 
 This direct-query alternative is useful diagnostically; it does **not** establish how I originally identified TABATHA_BRITT.
 
@@ -323,31 +323,31 @@ This direct-query alternative is useful diagnostically; it does **not** establis
 
 Unlike the initial username-discovery and GetNPUsers steps, the John command **was retained** in my 30 October session:
 
-~~~bash
+```bash
 john --format=krb5asrep \
   --wordlist=/usr/share/wordlists/rockyou.txt \
   asrep.hashes
-~~~
+```
 
 **Recorded success, shortened and redacted:**
 
-~~~text
+```text
 [REDACTED PASSWORD]  ($krb5asrep$23$TABATHA_BRITT@THM.CORP)
-~~~
+```
 
-This established that a password for **TABATHA_BRITT** could be recovered offline. The file \`asrep.hashes\` existed at the time of cracking, but the retained record does **not** prove which exact username-enumeration command generated the earlier input.
+This established that a password for **TABATHA_BRITT** could be recovered offline. The file `asrep.hashes` existed at the time of cracking, but the retained record does **not** prove which exact username-enumeration command generated the earlier input.
 
-If John reports \`No password hashes loaded\`, check that \`asrep.hashes\` is non-empty, that the capture format matches \`--format=krb5asrep\`, and that you did not accidentally save command output or error lines in place of hash material.
+If John reports `No password hashes loaded`, check that `asrep.hashes` is non-empty, that the capture format matches `--format=krb5asrep`, and that you did not accidentally save command output or error lines in place of hash material.
 
 ### 3.4 Validate credentials and choose the next pivot
 
 A cracked password is not yet proof of interactive access. Here is how I re-express my successful NetExec check without publishing the secret:
 
-~~~bash
+```bash
 read -rsp 'TABATHA_BRITT password: ' TABATHA_PASS; echo
 nxc smb "$TARGET" \
   -u TABATHA_BRITT -p "$TABATHA_PASS" -d thm.corp
-~~~
+```
 
 **Observed:** SMB authentication succeeded. An attempted WinRM session using that account did **not** establish a usable shell.
 
@@ -396,7 +396,7 @@ My recorded command produced domain information for **42 users**, **55 groups**,
 
 For readers who get stuck here, the practical workflow is:
 
-1. **Confirm collection succeeded** and locate the resulting JSON/ZIP files in the working directory. The exact output filenames depend on collector version and whether \`--zip\` was specified.
+1. **Confirm collection succeeded** and locate the resulting JSON/ZIP files in the working directory. The exact output filenames depend on collector version and whether `--zip` was specified.
 2. **Import those results** into your installed BloodHound edition (the import interface differs between legacy BloodHound and BloodHound CE).
 3. Search for **TABATHA_BRITT**, mark it as the currently controlled identity and inspect its **outbound object-control relationships**.
 4. Follow each relevant edge **one object at a time**. Check the edge type and target identity; do not guess that every connection implies Domain Admin rights.
@@ -404,10 +404,10 @@ For readers who get stuck here, the practical workflow is:
 
 **Troubleshooting:** If the collection reports a domain-controller DNS error, check name resolution before inventing other attack paths:
 
-~~~bash
+```bash
 getent hosts haystack.thm.corp
 dig @10.128.171.57 haystack.thm.corp +short
-~~~
+```
 
 You can provide the appropriate lab domain mapping in your local resolver/hosts configuration if necessary. A working SMB connection by IP does **not** guarantee that BloodHound's LDAP, Kerberos and DNS requests will resolve the correct FQDN.
 
@@ -502,12 +502,12 @@ For each reset, validating SMB authentication with the resulting identity is mor
 
 **How to verify those password resets without publishing the passwords:**
 
-~~~bash
+```bash
 # Run after each password reset, supplying the new password from that step.
 nxc smb "$TARGET" -u SHAWNA_BRAY -p "$SHAWNA_PASS" -d thm.corp
 nxc smb "$TARGET" -u CRUZ_HALL -p "$CRUZ_PASS" -d thm.corp
 nxc smb "$TARGET" -u DARLA_WINTERS -p "$DARLA_PASS" -d thm.corp
-~~~
+```
 
 A successful authentication for the **specific next identity** is the key observation. The precise full SMB output for all three checks is not retained, so I do **not** manufacture three identical “success” banners. If authentication fails, verify which account performed the reset, the edge's effective permission, any password-policy constraints and whether the target was a protected object.
 
@@ -616,17 +616,17 @@ This gave me a concrete, validated result beyond graph analysis or ticket issuan
 
 | Where you are stuck | Check this first | Next justified action |
 | --- | --- | --- |
-| SMB \`Data\` cannot be listed | Is the IP current? Does the attempted anonymous/Guest security context have access? | Enumerate shares, distinguish Guest from real domain authentication |
-| \`LILY_ONEILL\` has a password but SMB shows \`(Guest)\` | Was the account truly authenticated, or only guest-mapped? | Do not claim a foothold; continue domain-user discovery |
-| \`users.txt\` does not exist | The file must be **built** from an enumeration result | Run a permitted RID enumeration and parse only \`SidTypeUser\` entries |
-| \`users.txt\` is empty | Did RID enumeration return \`SidTypeUser\` entries? Does the parsing pattern match? | Inspect \`rid_enum.txt\` directly; do not continue with an empty list |
-| GetNPUsers returns no usable hashes | Did the query include real usernames? Is the KDC reachable? | Verify \`wc -l users.txt\`, domain and DC IP; test a known eligible account |
-| John loads no hashes | Is \`asrep.hashes\` non-empty and actually in John format? | Inspect the safe metadata and regenerate the capture if necessary |
+| SMB `Data` cannot be listed | Is the IP current? Does the attempted anonymous/Guest security context have access? | Enumerate shares, distinguish Guest from real domain authentication |
+| `LILY_ONEILL` has a password but SMB shows `(Guest)` | Was the account truly authenticated, or only guest-mapped? | Do not claim a foothold; continue domain-user discovery |
+| `users.txt` does not exist | The file must be **built** from an enumeration result | Run a permitted RID enumeration and parse only `SidTypeUser` entries |
+| `users.txt` is empty | Did RID enumeration return `SidTypeUser` entries? Does the parsing pattern match? | Inspect `rid_enum.txt` directly; do not continue with an empty list |
+| GetNPUsers returns no usable hashes | Did the query include real usernames? Is the KDC reachable? | Verify `wc -l users.txt`, domain and DC IP; test a known eligible account |
+| John loads no hashes | Is `asrep.hashes` non-empty and actually in John format? | Inspect the safe metadata and regenerate the capture if necessary |
 | TABATHA works on SMB but not WinRM | Are credentials valid but remote-shell permissions absent? | Continue **directory rights analysis** rather than guessing a shell exploit |
 | BloodHound collects nothing | Is lab DNS working? Was the correct domain/controller selected? | Fix name resolution and rerun authorized collection |
 | A password reset appears to succeed but the next identity fails | Does the caller really have the displayed ACL edge? Is the password compliant? | Check the specific relationship and validate that account separately |
-| \`getST\` does not save a ticket | Is the SPN permitted for delegation? Is the user eligible to be impersonated? | Inspect Impacket's exact error and delegation configuration |
-| Ticket saved but SMB fails | Is \`KRB5CCNAME\` pointing to the new \`.ccache\`? Does the target hostname match the SPN? | Check \`klist\`, FQDN resolution and the service identity |
+| `getST` does not save a ticket | Is the SPN permitted for delegation? Is the user eligible to be impersonated? | Inspect Impacket's exact error and delegation configuration |
+| Ticket saved but SMB fails | Is `KRB5CCNAME` pointing to the new `.ccache`? Does the target hostname match the SPN? | Check `klist`, FQDN resolution and the service identity |
 | File-access objective is unavailable | Did the ticket grant access to this **particular service** and share? | Inspect accepted identity and share rights; never infer full Administrator logon from ticket issuance |
 
 **No fabricated evidence:** This table is a troubleshooting guide based on the technologies and failures involved, not a claim that I personally encountered every error listed.
